@@ -1,7 +1,7 @@
 /// Async Scheme evaluator for the ma actor network.
 ///
-/// Platform-agnostic: runs on both native (tokio LocalSet) and WASM (browser
-/// event loop via gloo_timers) using `LocalBoxFuture`.
+/// Platform-agnostic: runs on both native (`tokio` `LocalSet`) and WASM (browser
+/// event loop via `gloo_timers`) using `LocalBoxFuture`.
 /// Host-specific behaviour is abstracted through `crate::host::SchemeCtx`.
 use futures::future::LocalBoxFuture;
 
@@ -12,7 +12,8 @@ use crate::value::{Env, SchemeVal};
 // ── Link-value check ───────────────────────────────────────────────────────
 
 /// True if `s` looks like an IPFS CID or a `did:ma:` DID.
-/// Used to decide whether a `<token>` or `include` path should be fetched.
+/// Used to decide whether a `<token>` or `` `include` `` path should be fetched.
+#[must_use]
 pub fn is_link_value(s: &str) -> bool {
     s.starts_with("did:ma:")
         || s.starts_with("bafy")
@@ -104,6 +105,7 @@ pub(crate) async fn eval_source_in_env(
 
 // ── Core evaluator ─────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines)]
 async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<SchemeVal, SchemeErr> {
     'tco: loop {
         match expr {
@@ -124,7 +126,7 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                 }
                 // ma dot-path in value position.
                 if s.starts_with('.') {
-                    return ctx.eval_dot(&s).map_err(|e| e);
+                    return ctx.eval_dot(&s);
                 }
                 return eval_atom(&s, &env);
             }
@@ -137,7 +139,7 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                 if let SchemeExpr::Atom(head) = &forms[0] {
                     match head.as_str() {
                         "define" => return eval_define(forms, env, ctx).await,
-                        "lambda" | "ʎ" => return eval_lambda(forms, env),
+                        "lambda" | "ʎ" => return eval_lambda(&forms, env),
 
                         "let" => {
                             if forms.len() < 3 {
@@ -579,7 +581,6 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                         }
                         expr = body.last().unwrap().clone();
                         env = new_env;
-                        continue 'tco;
                     }
                     other => return apply(other, args, ctx).await,
                 }
@@ -748,7 +749,7 @@ async fn eval_define(forms: Vec<SchemeExpr>, env: Env, ctx: Ctx) -> Result<Schem
     }
 }
 
-fn eval_lambda(forms: Vec<SchemeExpr>, env: Env) -> Result<SchemeVal, SchemeErr> {
+fn eval_lambda(forms: &[SchemeExpr], env: Env) -> Result<SchemeVal, SchemeErr> {
     if forms.len() < 3 {
         return Err(SchemeErr::Runtime(
             "lambda: expected parameter list and body".to_string(),
@@ -959,7 +960,7 @@ fn apply(
                 } else {
                     let args_str = args
                         .iter()
-                        .map(|v| v.to_splice_lossy())
+                        .map(SchemeVal::to_splice_lossy)
                         .collect::<Vec<_>>()
                         .join(" ");
                     format!("{path} {args_str}")
@@ -1008,6 +1009,11 @@ fn reconstruct_actor_command(target: &str, args: &[SchemeVal]) -> String {
 
 // ── Builtins ───────────────────────────────────────────────────────────────
 
+#[allow(
+    clippy::too_many_lines,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss
+)]
 fn apply_builtin(
     name: String,
     args: Vec<SchemeVal>,
@@ -1223,14 +1229,15 @@ fn apply_builtin(
             }
             "list-ref" => {
                 arity("list-ref", &args, 2)?;
-                let lst = match &args[0] {
-                    SchemeVal::List(v) => v,
-                    _ => return Err(SchemeErr::Runtime("list-ref: not a list".into())),
+                let SchemeVal::List(lst) = &args[0] else {
+                    return Err(SchemeErr::Runtime("list-ref: not a list".into()));
                 };
-                let idx = match &args[1] {
-                    SchemeVal::Int(n) => *n as usize,
-                    _ => return Err(SchemeErr::Runtime("list-ref: index not an integer".into())),
+                let SchemeVal::Int(n) = &args[1] else {
+                    return Err(SchemeErr::Runtime("list-ref: index not an integer".into()));
                 };
+                let idx = usize::try_from(*n).map_err(|_| {
+                    SchemeErr::Runtime("list-ref: index must be non-negative".into())
+                })?;
                 lst.get(idx).cloned().ok_or_else(|| {
                     SchemeErr::Runtime(format!("list-ref: index {idx} out of range"))
                 })
@@ -1470,10 +1477,13 @@ fn apply_builtin(
             // I/O — write to stdout
             "display" | "write" => {
                 let text = if name == "write" {
-                    args.iter().map(|v| v.repr()).collect::<Vec<_>>().join(" ")
+                    args.iter()
+                        .map(SchemeVal::repr)
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 } else {
                     args.iter()
-                        .map(|v| v.display())
+                        .map(SchemeVal::display)
                         .collect::<Vec<_>>()
                         .join(" ")
                 };
@@ -1487,7 +1497,7 @@ fn apply_builtin(
             "error" => {
                 let msg = args
                     .iter()
-                    .map(|v| v.display())
+                    .map(SchemeVal::display)
                     .collect::<Vec<_>>()
                     .join(" ");
                 Err(SchemeErr::Runtime(msg))
@@ -1513,7 +1523,7 @@ fn apply_builtin(
                 let raw = str_arg(&args[0], "rpc-send")?;
                 let verb = str_arg(&args[1], "rpc-send")?;
                 let target = ctx.resolve_target(&raw).map_err(SchemeErr::MaError)?;
-                let extra: Vec<String> = args[2..].iter().map(|v| v.to_splice_lossy()).collect();
+                let extra: Vec<String> = args[2..].iter().map(SchemeVal::to_splice_lossy).collect();
 
                 let send_result = ctx.send_rpc(&target, &verb, &extra).await;
                 match send_result {
@@ -1615,14 +1625,14 @@ fn apply_builtin(
 // ── Helper utilities ───────────────────────────────────────────────────────
 
 fn arity(name: &str, args: &[SchemeVal], n: usize) -> Result<(), SchemeErr> {
-    if args.len() != n {
+    if args.len() == n {
+        Ok(())
+    } else {
         Err(SchemeErr::Arity {
             name: name.to_string(),
             expected: n,
             got: args.len(),
         })
-    } else {
-        Ok(())
     }
 }
 
@@ -1638,6 +1648,7 @@ fn arity_min(name: &str, args: &[SchemeVal], min: usize) -> Result<(), SchemeErr
     }
 }
 
+#[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 fn scheme_equal(a: &SchemeVal, b: &SchemeVal) -> bool {
     match (a, b) {
         (SchemeVal::Int(x), SchemeVal::Int(y)) => x == y,
@@ -1654,6 +1665,7 @@ fn scheme_equal(a: &SchemeVal, b: &SchemeVal) -> bool {
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn num_lt(a: &SchemeVal, b: &SchemeVal) -> Result<bool, SchemeErr> {
     match (a, b) {
         (SchemeVal::Int(x), SchemeVal::Int(y)) => Ok(x < y),
@@ -1720,7 +1732,8 @@ fn list_arg(v: &SchemeVal, name: &str) -> Result<Vec<SchemeVal>, SchemeErr> {
 
 fn int_arg(v: &SchemeVal, name: &str) -> Result<usize, SchemeErr> {
     match v {
-        SchemeVal::Int(n) => Ok(*n as usize),
+        SchemeVal::Int(n) => usize::try_from(*n)
+            .map_err(|_| SchemeErr::Runtime(format!("{name}: index must be non-negative"))),
         _ => Err(SchemeErr::Runtime(format!("{name}: index not an integer"))),
     }
 }
@@ -1760,8 +1773,7 @@ fn extract_rest_param(mut params: Vec<String>) -> (Vec<String>, Option<String>) 
 fn expr_to_val(expr: &SchemeExpr) -> SchemeVal {
     match expr {
         SchemeExpr::Nil => SchemeVal::Nil,
-        SchemeExpr::Str(s) => SchemeVal::Str(s.clone()),
-        SchemeExpr::Atom(s) => SchemeVal::Str(s.clone()),
+        SchemeExpr::Str(s) | SchemeExpr::Atom(s) => SchemeVal::Str(s.clone()),
         SchemeExpr::List(forms) => SchemeVal::List(forms.iter().map(expr_to_val).collect()),
     }
 }
@@ -1803,5 +1815,551 @@ fn str_arg(v: &SchemeVal, name: &str) -> Result<String, SchemeErr> {
             "{name}: expected a string, got {}",
             other.display()
         ))),
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::SchemeCtx;
+    use crate::value::Env;
+    use futures::{channel::oneshot, future::LocalBoxFuture};
+    use std::rc::Rc;
+
+    // ── Minimal host ──────────────────────────────────────────────────────
+
+    /// A no-op `SchemeCtx` for unit tests.
+    /// Dot-paths return `Nil`; actor calls and IPFS fetches return errors.
+    struct TestCtx;
+
+    impl SchemeCtx for TestCtx {
+        fn eval_dot(&self, _command: &str) -> Result<SchemeVal, SchemeErr> {
+            Ok(SchemeVal::Nil)
+        }
+        fn display_output(&self, _text: &str) {}
+        fn resolve_target(&self, raw: &str) -> Result<String, String> {
+            Ok(raw.to_string())
+        }
+        fn register_reply_sender(&self, _id: String, _tx: oneshot::Sender<Result<String, String>>) {
+        }
+        fn fetch_cid<'a>(&'a self, _cid: &'a str) -> LocalBoxFuture<'a, Result<String, String>> {
+            Box::pin(async { Err("no IPFS in tests".to_string()) })
+        }
+        fn eval_actor<'a>(
+            &'a self,
+            _cmd: &'a str,
+        ) -> LocalBoxFuture<'a, Result<SchemeVal, SchemeErr>> {
+            Box::pin(async { Err(SchemeErr::Runtime("no actors in tests".into())) })
+        }
+        fn send_rpc<'a>(
+            &'a self,
+            _target: &'a str,
+            _verb: &'a str,
+            _args: &'a [String],
+        ) -> LocalBoxFuture<'a, Result<String, String>> {
+            Box::pin(async { Err("no RPC in tests".to_string()) })
+        }
+        fn send_text<'a>(
+            &'a self,
+            _target: &'a str,
+            _body: &'a str,
+        ) -> LocalBoxFuture<'a, Result<String, String>> {
+            Box::pin(async { Err("no send_text in tests".to_string()) })
+        }
+    }
+
+    fn ctx() -> Ctx {
+        Rc::new(TestCtx)
+    }
+
+    /// Evaluate all top-level forms in `src` and return the last value.
+    fn run(src: &str) -> SchemeVal {
+        let env = Env::new_root();
+        futures::executor::block_on(eval_source_in_env(src, env, ctx())).unwrap()
+    }
+
+    /// Like `run` but returns the `Result` so error cases can be asserted.
+    fn run_res(src: &str) -> Result<SchemeVal, SchemeErr> {
+        let env = Env::new_root();
+        futures::executor::block_on(eval_source_in_env(src, env, ctx()))
+    }
+
+    // ── is_link_value ─────────────────────────────────────────────────────
+
+    /// ```
+    /// # use ma_zscheme::eval::is_link_value;
+    /// assert!(is_link_value("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"));
+    /// assert!(is_link_value("did:ma:12D3KooWBmAwcd4PJNJvfV89HwE48nwkRmAgo8Vy3uQEyNNHBox2"));
+    /// assert!(!is_link_value("hello"));
+    /// assert!(!is_link_value(""));
+    /// ```
+    #[test]
+    fn is_link_value_recognises_cids_and_dids() {
+        assert!(is_link_value(
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+        ));
+        assert!(is_link_value(
+            "bafkreigh2akiscaildcqabab4efnxqfos5zqz2o3qcaz4x6gclz3a47bk4"
+        ));
+        assert!(is_link_value(
+            "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
+        ));
+        assert!(is_link_value(
+            "did:ma:12D3KooWBmAwcd4PJNJvfV89HwE48nwkRmAgo8Vy3uQEyNNHBox2"
+        ));
+        assert!(!is_link_value("hello"));
+        assert!(!is_link_value(""));
+        assert!(!is_link_value("http://example.com"));
+    }
+
+    // ── Atoms & literals ──────────────────────────────────────────────────
+
+    #[test]
+    fn literal_integer() {
+        assert!(matches!(run("42"), SchemeVal::Int(42)));
+    }
+
+    #[test]
+    fn literal_float() {
+        assert!(matches!(run("1.5"), SchemeVal::Float(f) if (f - 1.5).abs() < 1e-10));
+    }
+
+    #[test]
+    fn literal_bool_true() {
+        assert!(matches!(run("#t"), SchemeVal::Bool(true)));
+    }
+
+    #[test]
+    fn literal_bool_false() {
+        assert!(matches!(run("#f"), SchemeVal::Bool(false)));
+    }
+
+    #[test]
+    fn literal_string() {
+        assert!(matches!(run("\"hello\""), SchemeVal::Str(s) if s == "hello"));
+    }
+
+    #[test]
+    fn empty_list_is_nil() {
+        assert!(matches!(run("()"), SchemeVal::Nil));
+    }
+
+    // ── Arithmetic ────────────────────────────────────────────────────────
+
+    #[test]
+    fn add_integers() {
+        assert!(matches!(run("(+ 1 2)"), SchemeVal::Int(3)));
+    }
+
+    #[test]
+    fn add_multiple() {
+        assert!(matches!(run("(+ 1 2 3 4)"), SchemeVal::Int(10)));
+    }
+
+    #[test]
+    fn subtract() {
+        assert!(matches!(run("(- 10 3)"), SchemeVal::Int(7)));
+    }
+
+    #[test]
+    fn multiply() {
+        assert!(matches!(run("(* 3 4)"), SchemeVal::Int(12)));
+    }
+
+    #[test]
+    fn divide_exact() {
+        assert!(matches!(run("(/ 10 2)"), SchemeVal::Int(5)));
+    }
+
+    #[test]
+    fn divide_by_zero_is_err() {
+        assert!(run_res("(/ 1 0)").is_err());
+    }
+
+    #[test]
+    fn modulo() {
+        assert!(matches!(run("(mod 10 3)"), SchemeVal::Int(1)));
+    }
+
+    #[test]
+    fn negate() {
+        assert!(matches!(run("(- 5)"), SchemeVal::Int(-5)));
+    }
+
+    // ── Comparisons ───────────────────────────────────────────────────────
+
+    #[test]
+    fn equal_integers() {
+        assert!(matches!(run("(= 2 2)"), SchemeVal::Bool(true)));
+        assert!(matches!(run("(= 2 3)"), SchemeVal::Bool(false)));
+    }
+
+    #[test]
+    fn less_than() {
+        assert!(matches!(run("(< 1 2)"), SchemeVal::Bool(true)));
+        assert!(matches!(run("(< 2 1)"), SchemeVal::Bool(false)));
+    }
+
+    #[test]
+    fn greater_than() {
+        assert!(matches!(run("(> 3 2)"), SchemeVal::Bool(true)));
+    }
+
+    #[test]
+    fn chain_comparison() {
+        assert!(matches!(run("(< 1 2 3)"), SchemeVal::Bool(true)));
+        assert!(matches!(run("(< 1 3 2)"), SchemeVal::Bool(false)));
+    }
+
+    // ── Boolean ops ───────────────────────────────────────────────────────
+
+    #[test]
+    fn not_false() {
+        assert!(matches!(run("(not #f)"), SchemeVal::Bool(true)));
+    }
+
+    #[test]
+    fn not_truthy() {
+        assert!(matches!(run("(not 42)"), SchemeVal::Bool(false)));
+    }
+
+    #[test]
+    fn and_short_circuits() {
+        assert!(matches!(run("(and #t #t)"), SchemeVal::Bool(true)));
+        assert!(matches!(run("(and #t #f)"), SchemeVal::Bool(false)));
+        assert!(matches!(run("(and #f (/ 1 0))"), SchemeVal::Bool(false)));
+    }
+
+    #[test]
+    fn or_short_circuits() {
+        assert!(matches!(run("(or #f #t)"), SchemeVal::Bool(true)));
+        assert!(matches!(run("(or #t (/ 1 0))"), SchemeVal::Bool(true)));
+    }
+
+    // ── Control flow ─────────────────────────────────────────────────────
+
+    #[test]
+    fn if_true_branch() {
+        assert!(matches!(run("(if #t 1 2)"), SchemeVal::Int(1)));
+    }
+
+    #[test]
+    fn if_false_branch() {
+        assert!(matches!(run("(if #f 1 2)"), SchemeVal::Int(2)));
+    }
+
+    #[test]
+    fn cond_first_matching() {
+        assert!(matches!(
+            run("(cond (#f 0) (#t 1) (else 2))"),
+            SchemeVal::Int(1)
+        ));
+    }
+
+    #[test]
+    fn cond_else_fallthrough() {
+        assert!(matches!(run("(cond (#f 0) (else 9))"), SchemeVal::Int(9)));
+    }
+
+    #[test]
+    fn when_true_evaluates_body() {
+        assert!(matches!(run("(when #t 42)"), SchemeVal::Int(42)));
+    }
+
+    #[test]
+    fn when_false_returns_nil() {
+        assert!(matches!(run("(when #f 42)"), SchemeVal::Nil));
+    }
+
+    #[test]
+    fn unless_false_evaluates_body() {
+        assert!(matches!(run("(unless #f 7)"), SchemeVal::Int(7)));
+    }
+
+    #[test]
+    fn begin_returns_last() {
+        assert!(matches!(run("(begin 1 2 3)"), SchemeVal::Int(3)));
+    }
+
+    // ── Define & lambda ───────────────────────────────────────────────────
+
+    #[test]
+    fn define_and_use() {
+        assert!(matches!(run("(define x 10) x"), SchemeVal::Int(10)));
+    }
+
+    #[test]
+    fn define_function_and_call() {
+        assert!(matches!(
+            run("(define (square n) (* n n)) (square 5)"),
+            SchemeVal::Int(25)
+        ));
+    }
+
+    #[test]
+    fn lambda_closure() {
+        assert!(matches!(
+            run("(define (adder n) (lambda (x) (+ x n))) ((adder 3) 4)"),
+            SchemeVal::Int(7)
+        ));
+    }
+
+    #[test]
+    fn varargs_rest_param() {
+        assert!(matches!(
+            run("(define (sum . ns) (fold + 0 ns)) (sum 1 2 3)"),
+            SchemeVal::Int(6)
+        ));
+    }
+
+    // ── let forms ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn let_binds_locally() {
+        assert!(matches!(run("(let ((x 5)) x)"), SchemeVal::Int(5)));
+    }
+
+    #[test]
+    fn let_star_sequential_binding() {
+        assert!(matches!(
+            run("(let* ((x 1) (y (+ x 1))) y)"),
+            SchemeVal::Int(2)
+        ));
+    }
+
+    #[test]
+    fn letrec_mutual_recursion() {
+        let src = "(letrec ((even? (lambda (n) (if (= n 0) #t (odd? (- n 1)))))
+                            (odd?  (lambda (n) (if (= n 0) #f (even? (- n 1))))))
+                    (even? 4))";
+        assert!(matches!(run(src), SchemeVal::Bool(true)));
+    }
+
+    #[test]
+    fn named_let_loop() {
+        assert!(matches!(
+            run("(let loop ((i 0) (acc 0)) (if (= i 5) acc (loop (+ i 1) (+ acc i))))"),
+            SchemeVal::Int(10)
+        ));
+    }
+
+    // ── Tail-call optimisation ────────────────────────────────────────────
+
+    #[test]
+    fn tco_deep_recursion_does_not_overflow() {
+        // 1 000 000 iterations — would overflow without TCO
+        let src = "(define (count n) (if (= n 0) #t (count (- n 1)))) (count 1000000)";
+        assert!(matches!(run(src), SchemeVal::Bool(true)));
+    }
+
+    // ── List operations ───────────────────────────────────────────────────
+
+    #[test]
+    fn list_cons_car_cdr() {
+        assert!(matches!(
+            run("(car (cons 1 (list 2 3)))"),
+            SchemeVal::Int(1)
+        ));
+        assert!(matches!(run("(car (cdr (list 1 2 3)))"), SchemeVal::Int(2)));
+    }
+
+    #[test]
+    fn list_length() {
+        assert!(matches!(run("(length (list 1 2 3))"), SchemeVal::Int(3)));
+        assert!(matches!(run("(length '())"), SchemeVal::Int(0)));
+    }
+
+    #[test]
+    fn list_ref() {
+        assert!(matches!(
+            run("(list-ref (list 10 20 30) 1)"),
+            SchemeVal::Int(20)
+        ));
+    }
+
+    #[test]
+    fn list_ref_negative_index_is_err() {
+        assert!(run_res("(list-ref (list 1 2 3) -1)").is_err());
+    }
+
+    #[test]
+    fn append_lists() {
+        let v = run("(append (list 1 2) (list 3 4))");
+        assert!(matches!(v, SchemeVal::List(xs) if xs.len() == 4));
+    }
+
+    #[test]
+    fn reverse_list() {
+        let v = run("(reverse (list 1 2 3))");
+        if let SchemeVal::List(xs) = v {
+            assert!(matches!(xs[0], SchemeVal::Int(3)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn map_doubles() {
+        let v = run("(map (lambda (x) (* x 2)) (list 1 2 3))");
+        if let SchemeVal::List(xs) = v {
+            assert!(matches!(xs[1], SchemeVal::Int(4)));
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn filter_evens() {
+        let v = run("(filter (lambda (x) (= (mod x 2) 0)) (list 1 2 3 4))");
+        if let SchemeVal::List(xs) = v {
+            assert_eq!(xs.len(), 2);
+        } else {
+            panic!("expected list");
+        }
+    }
+
+    #[test]
+    fn fold_sum() {
+        assert!(matches!(
+            run("(fold + 0 (list 1 2 3 4))"),
+            SchemeVal::Int(10)
+        ));
+    }
+
+    // ── String operations ─────────────────────────────────────────────────
+
+    #[test]
+    fn string_append() {
+        assert!(matches!(
+            run("(string-append \"hello\" \" \" \"world\")"),
+            SchemeVal::Str(s) if s == "hello world"
+        ));
+    }
+
+    #[test]
+    fn string_length() {
+        assert!(matches!(
+            run("(string-length \"hello\")"),
+            SchemeVal::Int(5)
+        ));
+    }
+
+    #[test]
+    fn substring() {
+        assert!(matches!(
+            run("(substring \"hello\" 1 3)"),
+            SchemeVal::Str(s) if s == "el"
+        ));
+    }
+
+    #[test]
+    fn string_contains() {
+        assert!(matches!(
+            run("(string-contains \"foobar\" \"oba\")"),
+            SchemeVal::Bool(true)
+        ));
+        assert!(matches!(
+            run("(string-contains \"foobar\" \"xyz\")"),
+            SchemeVal::Bool(false)
+        ));
+    }
+
+    #[test]
+    fn string_upcase_downcase() {
+        assert!(matches!(
+            run("(string-upcase \"hello\")"),
+            SchemeVal::Str(s) if s == "HELLO"
+        ));
+        assert!(matches!(
+            run("(string-downcase \"WORLD\")"),
+            SchemeVal::Str(s) if s == "world"
+        ));
+    }
+
+    // ── apply builtin ─────────────────────────────────────────────────────
+
+    #[test]
+    fn apply_builtin_fn() {
+        assert!(matches!(run("(apply + (list 1 2 3))"), SchemeVal::Int(6)));
+    }
+
+    #[test]
+    fn apply_with_leading_args() {
+        assert!(matches!(run("(apply + 1 2 (list 3))"), SchemeVal::Int(6)));
+    }
+
+    // ── quote ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn quote_atom() {
+        assert!(matches!(run("(quote foo)"), SchemeVal::Str(s) if s == "foo"));
+    }
+
+    #[test]
+    fn quote_shorthand() {
+        assert!(matches!(run("'bar"), SchemeVal::Str(s) if s == "bar"));
+    }
+
+    // ── guard form ────────────────────────────────────────────────────────
+
+    #[test]
+    fn guard_catches_error() {
+        let src = r#"(guard (e (#t "caught")) (error "boom"))"#;
+        assert!(matches!(run(src), SchemeVal::Str(s) if s == "caught"));
+    }
+
+    #[test]
+    fn guard_passes_through_on_no_error() {
+        assert!(matches!(run("(guard (e (#t 0)) 42)"), SchemeVal::Int(42)));
+    }
+
+    // ── set! ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn set_bang_mutates_binding() {
+        assert!(matches!(
+            run("(define x 1) (set! x 99) x"),
+            SchemeVal::Int(99)
+        ));
+    }
+
+    // ── predicates ───────────────────────────────────────────────────────
+
+    #[test]
+    fn null_pred() {
+        assert!(matches!(run("(null? '())"), SchemeVal::Bool(true)));
+        assert!(matches!(run("(null? (list 1))"), SchemeVal::Bool(false)));
+    }
+
+    #[test]
+    fn pair_pred() {
+        assert!(matches!(run("(pair? (list 1 2))"), SchemeVal::Bool(true)));
+        assert!(matches!(run("(pair? '())"), SchemeVal::Bool(false)));
+    }
+
+    #[test]
+    fn string_pred() {
+        assert!(matches!(run("(string? \"hi\")"), SchemeVal::Bool(true)));
+        assert!(matches!(run("(string? 42)"), SchemeVal::Bool(false)));
+    }
+
+    #[test]
+    fn number_pred() {
+        assert!(matches!(run("(number? 3)"), SchemeVal::Bool(true)));
+        assert!(matches!(run("(number? \"x\")"), SchemeVal::Bool(false)));
+    }
+
+    // ── error propagation ─────────────────────────────────────────────────
+
+    #[test]
+    fn undefined_symbol_is_err() {
+        assert!(run_res("undefined-variable").is_err());
+    }
+
+    #[test]
+    fn arity_mismatch_is_err() {
+        assert!(run_res("(car)").is_err());
     }
 }

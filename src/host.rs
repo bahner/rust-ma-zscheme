@@ -1,4 +1,4 @@
-/// SchemeCtx — host interface for the ma-zscheme evaluator.
+/// `SchemeCtx` — host interface for the ma-zscheme evaluator.
 ///
 /// Implement this trait on your platform-specific context type to give the
 /// evaluator access to config, transport, and I/O.  The trait uses
@@ -20,12 +20,20 @@ pub trait SchemeCtx {
     ///
     /// Handles get (`.my.path`), set (`.my.path: value`),
     /// delete (`.my.path:`), and meta-verbs (`.my.path!verb args`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the dot-path command is invalid or the host refuses it.
     fn eval_dot(&self, command: &str) -> Result<SchemeVal, SchemeErr>;
 
     /// Write `text` to the host output channel (terminal line, browser span, …).
     fn display_output(&self, text: &str);
 
     /// Resolve an actor target (`@alias` or bare DID) to its full DID form.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the alias is unknown or the input is not a valid DID.
     fn resolve_target(&self, raw: &str) -> Result<String, String>;
 
     /// Register a oneshot `sender` so the poll loop can deliver the RPC reply

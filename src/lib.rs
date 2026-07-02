@@ -50,6 +50,12 @@ pub fn reset_session_env() {
 }
 
 /// Return the current session environment, creating one lazily if needed.
+///
+/// # Panics
+///
+/// Panics if the thread-local `SESSION_ENV` has already been destroyed
+/// (i.e., during thread shutdown after `reset_session_env` was not called).
+#[must_use]
 pub fn get_env() -> Env {
     SESSION_ENV.with(|e| {
         let mut inner = e.borrow_mut();
@@ -64,6 +70,10 @@ pub fn get_env() -> Env {
 
 /// Evaluate all top-level Scheme expressions in `source` in the session
 /// environment and return the value of the last expression.
+///
+/// # Errors
+///
+/// Returns `Err` if parsing fails or any evaluated expression raises an error.
 pub async fn eval_source(source: &str, ctx: Ctx) -> Result<SchemeVal, SchemeErr> {
     eval::eval_source_in_env(source, get_env(), ctx).await
 }

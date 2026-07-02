@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.82"
 description = "Scheme evaluator for the ma actor network — parser, evaluator, and SchemeCtx host trait"
 license = "MIT"
-repository = "https://github.com/bahner/ma-zscheme"
+repository = "https://github.com/bahner/rust-ma-zscheme"
 keywords = ["scheme", "interpreter", "ipfs", "actor", "wasm"]
 categories = ["compilers", "wasm", "no-std"]
 
