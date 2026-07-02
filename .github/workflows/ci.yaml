@@ -36,12 +36,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Run tests
-        run: cargo test --all-features --target ${{ matrix.target }}
+        run: cargo test --workspace --all-features --target ${{ matrix.target }}
 
       - name: Run clippy
-        run: cargo clippy --all-features --target ${{ matrix.target }} -- -D warnings
+        run: >
+          cargo clippy --workspace --all-targets --all-features
+          --target ${{ matrix.target }}
+          -- -W clippy::pedantic -D warnings
 
   wasm:
+    # Only ma-zscheme (the core evaluator) targets wasm32.
+    # ma-zscheme-yaml uses file I/O; ma-zscheme-ipfs uses todo!().
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -49,8 +54,8 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install stable --target wasm32-unknown-unknown
 
-      - name: Check wasm32
-        run: cargo check --target wasm32-unknown-unknown
+      - name: Check ma-zscheme for wasm32
+        run: cargo check -p ma-zscheme --target wasm32-unknown-unknown
 
   fmt:
     runs-on: ubuntu-latest
@@ -61,4 +66,4 @@ jobs:
         run: rustup toolchain install stable --component rustfmt
 
       - name: Check formatting
-        run: cargo fmt -- --check
+        run: cargo fmt --all -- --check
