@@ -1,0 +1,13 @@
+[package]
+name = "ma-zscheme"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Scheme evaluator for the ma actor network — parser, evaluator, and SchemeCtx host trait"
+license = "MIT"
+repository = "https://github.com/bahner/ma-zscheme"
+keywords = ["scheme", "interpreter", "ipfs", "actor", "wasm"]
+categories = ["compilers", "wasm", "no-std"]
+
+[dependencies]
+futures = "0.3"
