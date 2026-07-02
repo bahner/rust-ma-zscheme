@@ -22,12 +22,14 @@
 //! let result = eval_source("(+ 1 2)", ctx).await?;
 //! ```
 
+pub mod dot;
 pub mod eval;
 pub mod host;
 pub mod parser;
 pub mod registry;
 pub mod value;
 
+pub use dot::{is_link_value, parse_actor_command, parse_dot_command, DotOp};
 pub use eval::{eval, eval_str, SchemeErr};
 pub use host::{Ctx, SchemeCtx};
 pub use registry::{DotRegistry, InMemoryRegistry};

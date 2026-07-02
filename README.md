@@ -1,33 +1,203 @@
 # ma-zscheme
 
 Scheme evaluator for the [間 (ma) actor network](https://github.com/bahner/rust-ma-core).
-Provides a complete, async, host-agnostic Scheme interpreter with ma-specific
-primitives for dot-path config, actor messaging, and IPFS/CID loading.
+A complete, async Scheme interpreter with ma-specific primitives for
+dot-path config, actor messaging, and IPFS/CID loading.
 
 Runs on both **native** (tokio `LocalSet`) and **WASM** (browser event loop)
-targets without modification.
+targets without modification. The canonical host is
+[zion](https://github.com/bahner/ma-zion), the browser-based ma actor workstation.
 
 ---
 
-## Features
+## Language overview
 
-- **Proper tail-call optimisation (TCO)** — iterative `'tco` loop; deep
-  recursion does not overflow the stack.
-- **Named `let`** — `(let loop ((n 0)) …)` is supported.
-- **`apply`** as a first-class procedure.
-- **Pipe threading** — `val | (f arg) | g` syntax.
-- **ma primitives**:
-  - Dot-path access: `(.my.config.key)` / `(.my.path: "value")`
-  - Actor calls: `(@alias#frag:verb arg)` / `(did:ma:…#frag:verb arg)`
-  - CID loading: `(<bafyXXX>)` — fetches content from IPFS and evaluates it
-- **Session environment** — `(define …)` bindings persist for the login
-  session and are cleared on logout.
-- **R7RS-small `guard`** — structured error handling.
-- **No external parser dependencies** — the lexer and parser are pure Rust.
+zscheme is a Lisp/Scheme dialect. Any expression wrapped in `(…)` is
+evaluated before the surrounding command is dispatched. Results are spliced
+back as strings.
+
+```scheme
+; Arithmetic and strings
+(+ 1 2)                               ; → 3
+(string-append "hello" " " "world")   ; → hello world
+
+; Definitions persist for the session
+(define (fib n)
+  (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
+(fib 10)                              ; → 55
+
+; Inline substitution — result becomes part of the host command
+(.my.aliases.sky)#room:enter ((.my.aliases.ms)#house:enter #room)
+```
 
 ---
 
-## Crate structure
+## Types
+
+| Type | Examples | Notes |
+|------|----------|-------|
+| Integer | `42`, `-7` | 64-bit signed |
+| Float | `3.14`, `-0.5` | 64-bit IEEE 754 |
+| String | `"hello"`, `"did:ma:…"` | UTF-8 |
+| Boolean | `#t`, `#f` | |
+| Nil | `()`, `nil` | Empty list / null |
+| List | `(1 2 3)` | Proper list |
+| Lambda | `(lambda (x) x)` | Closure |
+
+Fragment atoms such as `#room` and `#house:enter` are treated as strings.
+
+---
+
+## Special forms
+
+`define`, `lambda` / `ʎ`, `let`, `let*`, `letrec`, `if`, `cond`, `begin`,
+`and`, `or`, `when`, `unless`, `set!`, `quote` / `'`, `guard`, `apply`.
+
+Named `let`:
+
+```scheme
+(let loop ((i 0) (acc '()))
+  (if (= i 5)
+      acc
+      (loop (+ i 1) (cons i acc))))
+```
+
+`guard` (R7RS-small structured error handling):
+
+```scheme
+(guard (e
+        ((string-contains e "not found") "default")
+        (#t (error e)))
+  (risky-operation))
+```
+
+---
+
+## Core builtins
+
+Arithmetic: `+` `-` `*` `/` `mod` `floor` `ceiling` `round` `truncate`
+
+Comparison: `=` `<` `>` `<=` `>=` `equal?`
+
+Lists: `list` `cons` `car` `cdr` `null?` `pair?`
+
+Strings: `string-append` `string-length` `substring` `string-index`
+`string-upcase` `string-downcase` `number->string` `string->number`
+
+Type predicates: `string?` `number?` `boolean?` `procedure?`
+
+I/O and control: `display` `write` `error` `assert`
+
+Script loading: `(include path)` — evaluate all forms in `path.content`
+
+---
+
+## ma primitives
+
+The evaluator recognises forms based on the head of a list expression.
+
+### Dot-path (synchronous config access)
+
+| Form | Meaning |
+|------|---------|
+| `(.my.path)` | get — returns the config value |
+| `(.my.path: "v")` | set — writes config, returns `nil` |
+| `(.my.path:)` | delete subtree, returns `nil` |
+
+```scheme
+(.my.aliases.sky)                     ; returns stored DID
+(.my.config.colour.text)              ; returns colour string
+(.my.config.k: "value")              ; sets a config key
+```
+
+### Actor RPC (asynchronous)
+
+| Form | Meaning |
+|------|---------|
+| `(@alias#frag:verb arg…)` | expand alias → DID, send RPC, await reply |
+| `(did:ma:abc#frag:verb arg…)` | send RPC directly to full DID-URL |
+
+The `@` / `did:` syntax auto-unwraps replies: success returns the value,
+failure raises a `SchemeErr`. Use `rpc-send` for explicit tuple handling.
+
+```scheme
+(@sky#house:enter #room)              ; → "ticket-xyz"
+(rpc-send "@sky#house" ":enter" "#room")  ; → (:ok "ticket-xyz")
+(ok? (rpc-send "@sky#ping" ":ping"))      ; → #t
+```
+
+### CID loading
+
+A CID literal in function position fetches content from IPFS and evaluates
+all top-level forms in the session environment.
+
+```scheme
+(<bafyXXX>)             ; fetch CID, eval all top-level forms
+(<bafyXXX> arg1 arg2)   ; fetch CID, eval, then call result as lambda
+```
+
+Wrap with `guard` to handle fetch or parse failures:
+
+```scheme
+(guard (e (#t (display (string-append "load failed: " e))))
+  (<bafyxxx>))
+```
+
+---
+
+## Pipe threading
+
+Inside a `(…)` expression, `|` threads a value through a chain of functions
+(thread-first). An explicit `_` placeholder overrides placement.
+
+```scheme
+"hello" | string-upcase | (string-append " world")
+; → "HELLO world"
+
+(@sky#room:who | (search-by "hans") | length)
+; count players named "hans"
+
+(@sky#room:who | (take _ 5) | (join _ "\n"))
+; explicit _ placeholder
+```
+
+---
+
+## Send primitives
+
+| Function | Description |
+|----------|-------------|
+| `(rpc-send target verb arg…)` | RPC call; returns `(:ok v)` / `(:error r)` / `(:timeout)` |
+| `(msg-send target body)` | Plain-text inbox message; returns `(:ok msg-id)` |
+| `(chat-send target text)` | Ephemeral chat message |
+| `(emote-send target text)` | Emote message |
+
+### Reply tuple helpers
+
+| Function | Description |
+|----------|-------------|
+| `(ok? reply)` | True if first element is `":ok"` |
+| `(err? reply)` | True if first element is `":error"` |
+| `(ok-val reply)` | Second element of `(:ok value)` |
+| `(err-msg reply)` | Second element of `(:error reason)` |
+
+---
+
+## Session environment
+
+`(define …)` bindings persist across `eval_source` calls within a session
+and are cleared on logout.
+
+```scheme
+(define (square x) (* x x))
+(square 9)    ; → 81  (available for the entire session)
+```
+
+---
+
+## Implementation
+
+### Crate structure
 
 | File | Contents |
 |------|----------|
@@ -37,11 +207,16 @@ targets without modification.
 | `src/parser.rs` | S-expression lexer + parser → `SchemeExpr` AST |
 | `src/value.rs` | `SchemeVal` enum + `Env` (lexically-scoped environment) |
 
----
+### Notable properties
 
-## Usage
+- **Proper tail-call optimisation (TCO)** — iterative `'tco` loop; deep
+  recursion does not overflow the stack.
+- **Named `let`** — `(let loop ((n 0)) …)` is fully supported.
+- **No external parser dependencies** — the lexer and parser are pure Rust.
 
-### 1. Implement `SchemeCtx`
+### Integrating into a host
+
+Implement `SchemeCtx` for your host context, then call `eval_source`:
 
 ```rust
 use ma_zscheme::{Ctx, SchemeCtx, SchemeVal, SchemeErr};
@@ -97,11 +272,8 @@ impl SchemeCtx for MyCtx {
         todo!()
     }
 }
-```
 
-### 2. Evaluate source
-
-```rust
+// Evaluate source
 use std::rc::Rc;
 use ma_zscheme::{eval_source, init_session_env};
 
@@ -110,78 +282,6 @@ init_session_env();
 
 let result = eval_source("(+ 1 2)", ctx).await?;
 // result == SchemeVal::Int(3)
-```
-
----
-
-## ma primitives
-
-### Dot-path (synchronous config access)
-
-| Form | Meaning |
-|------|---------|
-| `(.my.path)` | get — returns the config value as a string |
-| `(.my.path: "v")` | set — writes config, returns `nil` |
-| `(.my.path:)` | delete subtree, returns `nil` |
-| `(.my.path!verb args…)` | meta-verb dispatch, returns `nil` |
-
-### Actor calls (asynchronous RPC)
-
-| Form | Meaning |
-|------|---------|
-| `(@alias#frag:verb arg…)` | expand alias → DID, send RPC, await reply |
-| `(did:ma:abc#frag:verb arg…)` | send RPC directly to full DID-URL |
-
-### CID loading
-
-```scheme
-(<bafyXXX>)             ; fetch CID, eval all top-level forms
-(<bafyXXX> arg1 arg2)   ; fetch CID, eval, then call result as lambda
-```
-
-### Pipe threading
-
-```scheme
-"hello" | string-upcase | (string-append " world")
-; => "HELLO world"
-```
-
----
-
-## Special forms
-
-`define`, `lambda`, `let`, `let*`, `letrec`, `if`, `cond`, `begin`,
-`and`, `or`, `when`, `unless`, `set!`, `quote`, `guard`, `apply`.
-
-Named `let`:
-
-```scheme
-(let loop ((i 0) (acc '()))
-  (if (= i 5)
-      acc
-      (loop (+ i 1) (cons i acc))))
-```
-
-`guard` (R7RS-small error handling):
-
-```scheme
-(guard (e
-        ((string-contains e "not found") "default")
-        (#t (error e)))
-  (risky-operation))
-```
-
----
-
-## Session environment
-
-`(define …)` bindings persist across `eval_source` calls within a session:
-
-```rust
-init_session_env();   // on login / script start
-eval_source("(define x 42)", ctx.clone()).await?;
-eval_source("(+ x 1)", ctx.clone()).await?;  // => 43
-reset_session_env();  // on logout / script end
 ```
 
 ---
