@@ -41,7 +41,7 @@ pub trait SchemeCtx {
     fn register_reply_sender(
         &self,
         msg_id: String,
-        sender: oneshot::Sender<Result<String, String>>,
+        sender: oneshot::Sender<Result<SchemeVal, String>>,
     );
 
     // ── Asynchronous methods ──────────────────────────────────────────────

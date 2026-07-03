@@ -41,7 +41,7 @@ pub trait SchemeCtx {
     fn register_reply_sender(
         &self,
         msg_id: String,
-        sender: oneshot::Sender<Result<String, String>>,
+        sender: oneshot::Sender<Result<SchemeVal, String>>,
     );
 
     // ── Asynchronous methods ──────────────────────────────────────────────
@@ -55,13 +55,23 @@ pub trait SchemeCtx {
     /// `did:ma:…#frag:verb arg`.
     fn eval_actor<'a>(&'a self, cmd: &'a str) -> LocalBoxFuture<'a, Result<SchemeVal, SchemeErr>>;
 
+    /// Dispatch an actor call with already-evaluated `SchemeVal` arguments,
+    /// preserving list and map structure in the CBOR encoding.
+    ///
+    /// `actor` is `@alias#frag:verb` or a DID string — no inline args.
+    fn eval_actor_with_vals<'a>(
+        &'a self,
+        actor: &'a str,
+        args: &'a [SchemeVal],
+    ) -> LocalBoxFuture<'a, Result<SchemeVal, SchemeErr>>;
+
     /// Send an RPC message to `target` and return the message id for reply
     /// correlation via `register_reply_sender`.
     fn send_rpc<'a>(
         &'a self,
         target: &'a str,
         verb: &'a str,
-        args: &'a [String],
+        args: &'a [SchemeVal],
     ) -> LocalBoxFuture<'a, Result<String, String>>;
 
     /// Send a plain-text inbox message (fire-and-forget) and return the

@@ -968,15 +968,11 @@ fn apply(
                 ctx.eval_dot(&command)
             }
 
-            SchemeVal::MaActor(actor) => {
-                let cmd = reconstruct_actor_command(&actor, &args);
-                ctx.eval_actor(&cmd).await
-            }
+            SchemeVal::MaActor(actor) => ctx.eval_actor_with_vals(&actor, &args).await,
 
             // DID string in function position.
             SchemeVal::Str(ref s) if s.starts_with("did:") => {
-                let cmd = reconstruct_actor_command(s, &args);
-                ctx.eval_actor(&cmd).await
+                ctx.eval_actor_with_vals(s, &args).await
             }
 
             other => Err(SchemeErr::Runtime(format!(
@@ -1523,17 +1519,18 @@ fn apply_builtin(
                 let raw = str_arg(&args[0], "rpc-send")?;
                 let verb = str_arg(&args[1], "rpc-send")?;
                 let target = ctx.resolve_target(&raw).map_err(SchemeErr::MaError)?;
-                let extra: Vec<String> = args[2..].iter().map(SchemeVal::to_splice_lossy).collect();
-
-                let send_result = ctx.send_rpc(&target, &verb, &extra).await;
+                let send_result = ctx.send_rpc(&target, &verb, &args[2..]).await;
                 match send_result {
                     Err(e) => Ok(err_tuple(e)),
                     Ok(msg_id) => {
                         let (sender, receiver) =
-                            futures::channel::oneshot::channel::<Result<String, String>>();
+                            futures::channel::oneshot::channel::<Result<SchemeVal, String>>();
                         ctx.register_reply_sender(msg_id, sender);
                         match receiver.await {
-                            Ok(Ok(content)) => Ok(ok_tuple(content)),
+                            Ok(Ok(val)) => Ok(SchemeVal::List(vec![
+                                SchemeVal::Str(":ok".to_string()),
+                                val,
+                            ])),
                             Ok(Err(e)) => Ok(err_tuple(e)),
                             Err(_) => Ok(timeout_tuple()),
                         }
@@ -1842,7 +1839,7 @@ mod tests {
         fn resolve_target(&self, raw: &str) -> Result<String, String> {
             Ok(raw.to_string())
         }
-        fn register_reply_sender(&self, _id: String, _tx: oneshot::Sender<Result<String, String>>) {
+        fn register_reply_sender(&self, _id: String, _tx: oneshot::Sender<Result<SchemeVal, String>>) {
         }
         fn fetch_cid<'a>(&'a self, _cid: &'a str) -> LocalBoxFuture<'a, Result<String, String>> {
             Box::pin(async { Err("no IPFS in tests".to_string()) })
@@ -1853,11 +1850,18 @@ mod tests {
         ) -> LocalBoxFuture<'a, Result<SchemeVal, SchemeErr>> {
             Box::pin(async { Err(SchemeErr::Runtime("no actors in tests".into())) })
         }
+        fn eval_actor_with_vals<'a>(
+            &'a self,
+            _actor: &'a str,
+            _args: &'a [SchemeVal],
+        ) -> LocalBoxFuture<'a, Result<SchemeVal, SchemeErr>> {
+            Box::pin(async { Err(SchemeErr::Runtime("no actors in tests".into())) })
+        }
         fn send_rpc<'a>(
             &'a self,
             _target: &'a str,
             _verb: &'a str,
-            _args: &'a [String],
+            _args: &'a [SchemeVal],
         ) -> LocalBoxFuture<'a, Result<String, String>> {
             Box::pin(async { Err("no RPC in tests".to_string()) })
         }
