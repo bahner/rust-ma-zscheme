@@ -218,21 +218,21 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "ma-zscheme"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures",
 ]
 
 [[package]]
 name = "ma-zscheme-ipfs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ma-zscheme",
 ]
 
 [[package]]
 name = "ma-zscheme-yaml"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "directories",
