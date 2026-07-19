@@ -11,16 +11,15 @@ use crate::value::{Env, SchemeVal};
 
 // ── Link-value check ───────────────────────────────────────────────────────
 
-/// True if `s` looks like an IPFS CID or a `did:ma:` DID.
-/// Used to decide whether a `<token>` or `` `include` `` path should be fetched.
+/// True if `s` is a `did:ma:` DID or a `/ipfs/…`, `/ipns/…`, `/ipld/…` path.
+/// Used to decide whether a path or `` `include` `` argument should be
+/// fetched remotely rather than read from local `/my` / `/ctx` config.
 #[must_use]
 pub fn is_link_value(s: &str) -> bool {
     s.starts_with("did:ma:")
-        || s.starts_with("bafy")
-        || s.starts_with("bafk")
-        || s.starts_with("bafz")
-        || s.starts_with("bafei")
-        || s.starts_with("Qm")
+        || s.starts_with("/ipfs/")
+        || s.starts_with("/ipns/")
+        || s.starts_with("/ipld/")
 }
 
 // ── Error ──────────────────────────────────────────────────────────────────
@@ -112,21 +111,19 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
             SchemeExpr::Nil => return Ok(SchemeVal::Nil),
             SchemeExpr::Str(s) => return Ok(SchemeVal::Str(s)),
             SchemeExpr::Atom(s) => {
-                // CID literal: <bafy…> — fetch from IPFS, return content as string.
-                if s.starts_with('<') && s.ends_with('>') && s.len() > 2 {
-                    let inner = s[1..s.len() - 1].to_string();
-                    return if is_link_value(&inner) {
-                        ctx.fetch_cid(&inner)
+                // ma path atom in value position: #/my/…, #/ctx/…,
+                // #/ipfs/…, #/ipns/…, #/ipld/… — `#/` avoids colliding with
+                // the `/` division builtin.
+                if let Some(rest) = s.strip_prefix("#/") {
+                    let path = format!("/{rest}");
+                    return if is_link_value(&path) {
+                        ctx.fetch_path(&path)
                             .await
                             .map(SchemeVal::Str)
                             .map_err(SchemeErr::MaError)
                     } else {
-                        Err(SchemeErr::Runtime(format!("not a valid CID: {inner}")))
+                        ctx.eval_dot(&path)
                     };
-                }
-                // ma dot-path in value position.
-                if s.starts_with('.') {
-                    return ctx.eval_dot(&s);
                 }
                 return eval_atom(&s, &env);
             }
@@ -509,11 +506,19 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                     return eval_pipe(forms, env, ctx).await;
                 }
 
-                // ── ma dot-path in head position ────────────────────────────────
+                // ── ma path in head position (#/my, #/ctx, #/ipfs, #/ipns, #/ipld) ──
                 if let SchemeExpr::Atom(head) = &forms[0] {
-                    if head.starts_with('.') {
+                    if let Some(rest) = head.strip_prefix("#/") {
+                        let path = format!("/{rest}");
                         if forms.len() == 1 {
-                            let val = ctx.eval_dot(head)?;
+                            if is_link_value(&path) {
+                                return ctx
+                                    .fetch_path(&path)
+                                    .await
+                                    .map(SchemeVal::Str)
+                                    .map_err(SchemeErr::MaError);
+                            }
+                            let val = ctx.eval_dot(&path)?;
                             if let SchemeVal::Str(ref s) = val {
                                 if s.trim_start().starts_with('(') {
                                     let tokens = tokenize(s)
@@ -526,12 +531,17 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                             }
                             return Ok(val);
                         }
-                        let path = SchemeVal::MaPath(head.clone());
+                        if is_link_value(&path) {
+                            return Err(SchemeErr::Runtime(format!(
+                                "{path} is read-only and does not accept arguments"
+                            )));
+                        }
+                        let mapath = SchemeVal::MaPath(path);
                         let mut args = Vec::with_capacity(forms.len() - 1);
                         for form in &forms[1..] {
                             args.push(eval(form.clone(), env.clone(), ctx.clone()).await?);
                         }
-                        return apply(path, args, ctx).await;
+                        return apply(mapath, args, ctx).await;
                     }
                 }
 
@@ -610,11 +620,10 @@ fn eval_atom(s: &str, env: &Env) -> Result<SchemeVal, SchemeErr> {
         return Ok(SchemeVal::Nil);
     }
     // ma fragment atoms like `#room`, `#house:enter` — treat as strings.
+    // (`#/…` path atoms are intercepted earlier in `eval_inner` and never
+    // reach this fallback.)
     if s.starts_with('#') {
         return Ok(SchemeVal::Str(s.to_string()));
-    }
-    if s.starts_with('.') {
-        return Ok(SchemeVal::MaPath(s.to_string()));
     }
     if s.starts_with('@') {
         return Ok(SchemeVal::MaActor(s.to_string()));
@@ -1600,7 +1609,9 @@ fn apply_builtin(
                         )))
                     }
                 };
-                let content = if path.starts_with('.') {
+                let content = if is_link_value(&path) {
+                    ctx.fetch_path(&path).await.map_err(SchemeErr::MaError)?
+                } else if path.starts_with('/') {
                     match ctx.eval_dot(&path)? {
                         SchemeVal::Str(s) => s,
                         _ => {
@@ -1609,8 +1620,6 @@ fn apply_builtin(
                             )))
                         }
                     }
-                } else if is_link_value(&path) {
-                    ctx.fetch_cid(&path).await.map_err(SchemeErr::MaError)?
                 } else {
                     path.clone()
                 };
@@ -1844,7 +1853,7 @@ mod tests {
         }
         fn register_reply_sender(&self, _id: String, _tx: oneshot::Sender<Result<String, String>>) {
         }
-        fn fetch_cid<'a>(&'a self, _cid: &'a str) -> LocalBoxFuture<'a, Result<String, String>> {
+        fn fetch_path<'a>(&'a self, _path: &'a str) -> LocalBoxFuture<'a, Result<String, String>> {
             Box::pin(async { Err("no IPFS in tests".to_string()) })
         }
         fn eval_actor<'a>(
@@ -1890,7 +1899,7 @@ mod tests {
 
     /// ```
     /// # use ma_zscheme::eval::is_link_value;
-    /// assert!(is_link_value("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"));
+    /// assert!(is_link_value("/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"));
     /// assert!(is_link_value("did:ma:12D3KooWBmAwcd4PJNJvfV89HwE48nwkRmAgo8Vy3uQEyNNHBox2"));
     /// assert!(!is_link_value("hello"));
     /// assert!(!is_link_value(""));
@@ -1898,20 +1907,21 @@ mod tests {
     #[test]
     fn is_link_value_recognises_cids_and_dids() {
         assert!(is_link_value(
-            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+            "/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
         ));
         assert!(is_link_value(
-            "bafkreigh2akiscaildcqabab4efnxqfos5zqz2o3qcaz4x6gclz3a47bk4"
+            "/ipfs/bafkreigh2akiscaildcqabab4efnxqfos5zqz2o3qcaz4x6gclz3a47bk4"
         ));
-        assert!(is_link_value(
-            "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-        ));
+        assert!(is_link_value("/ipns/k51qzi5uqu5dgeb1kdz9fqvzhx2rmpe3fjb0k4jvpxvbn4bcnrfkfeoo9wisze"));
         assert!(is_link_value(
             "did:ma:12D3KooWBmAwcd4PJNJvfV89HwE48nwkRmAgo8Vy3uQEyNNHBox2"
         ));
         assert!(!is_link_value("hello"));
         assert!(!is_link_value(""));
         assert!(!is_link_value("http://example.com"));
+        assert!(!is_link_value(
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+        ));
     }
 
     // ── Atoms & literals ──────────────────────────────────────────────────

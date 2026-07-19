@@ -6,8 +6,9 @@
 //! - Proper tail-call optimisation (TCO) via an explicit `'tco` loop
 //! - Named `let` (`let loop …`)
 //! - `apply` as a first-class procedure
-//! - ma-specific primitives: dot-paths (`.my.path`), actor calls (`@alias`
-//!   / `did:ma:…`), and CID loading (`<bafy…>`)
+//! - ma-specific primitives: local config paths (`#/my/path`, `#/ctx/path`),
+//!   actor calls (`@alias` / `did:ma:…`), and remote fetch paths
+//!   (`#/ipfs/…`, `#/ipns/…`, `#/ipld/…`)
 //! - Pipe threading (`val | (f arg) | g`)
 //!
 //! ## Usage
@@ -23,6 +24,7 @@
 //! ```
 
 pub mod dot;
+pub mod dump;
 pub mod eval;
 pub mod host;
 pub mod parser;
@@ -30,6 +32,7 @@ pub mod registry;
 pub mod value;
 
 pub use dot::{is_link_value, parse_actor_command, parse_dot_command, DotOp};
+pub use dump::dump_env_source;
 pub use eval::{eval, eval_str, SchemeErr};
 pub use host::{Ctx, SchemeCtx};
 pub use registry::{DotRegistry, InMemoryRegistry};
@@ -80,4 +83,15 @@ pub fn get_env() -> Env {
 /// Returns `Err` if parsing fails or any evaluated expression raises an error.
 pub async fn eval_source(source: &str, ctx: Ctx) -> Result<SchemeVal, SchemeErr> {
     eval::eval_source_in_env(source, get_env(), ctx).await
+}
+
+/// Evaluate all top-level Scheme expressions in `source` in the given
+/// environment (instead of the shared session environment) and return the
+/// value of the last expression.
+///
+/// # Errors
+///
+/// Returns `Err` if parsing fails or any evaluated expression raises an error.
+pub async fn eval_source_in(source: &str, env: Env, ctx: Ctx) -> Result<SchemeVal, SchemeErr> {
+    eval::eval_source_in_env(source, env, ctx).await
 }

@@ -4,7 +4,7 @@
 //!
 //! This crate is a skeleton. Implementations are stubbed with `todo!()`.
 //!
-//! A future implementation will store dot-path values as IPFS DAG-CBOR
+//! A future implementation will store path values as IPFS DAG-CBOR
 //! objects, enabling fully decentralised, content-addressed configuration.
 //! Changes will be published to IPNS so the registry survives across
 //! sessions without a local file.
@@ -59,7 +59,7 @@ impl IpfsRegistry {
 impl DotRegistry for IpfsRegistry {
     fn get(&self, path: &str) -> Option<String> {
         // TODO: fetch from IPFS DAG by deriving CID from the IPNS root + path.
-        self.cache.get(path.trim_start_matches('.')).cloned()
+        self.cache.get(path.trim_start_matches('/')).cloned()
     }
 
     fn set(&mut self, _path: &str, _value: &str) {

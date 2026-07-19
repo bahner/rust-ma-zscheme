@@ -16,14 +16,16 @@ use crate::value::SchemeVal;
 pub trait SchemeCtx {
     // ── Synchronous methods ───────────────────────────────────────────────
 
-    /// Evaluate a ma dot-path command and return the result as a `SchemeVal`.
+    /// Evaluate a ma local config path and return the result as a `SchemeVal`.
     ///
-    /// Handles get (`.my.path`), set (`.my.path: value`),
-    /// delete (`.my.path:`), and meta-verbs (`.my.path!verb args`).
+    /// Handles get (`/my/path`), set (`/my/path: value`),
+    /// delete (`/my/path:`), and meta-verbs (`/my/path!verb args`).
+    /// Only ever called for local roots (`/my`, `/ctx`) — `/ipfs`, `/ipns`,
+    /// `/ipld` are routed to [`fetch_path`][Self::fetch_path] instead.
     ///
     /// # Errors
     ///
-    /// Returns `Err` if the dot-path command is invalid or the host refuses it.
+    /// Returns `Err` if the path command is invalid or the host refuses it.
     fn eval_dot(&self, command: &str) -> Result<SchemeVal, SchemeErr>;
 
     /// Write `text` to the host output channel (terminal line, browser span, …).
@@ -46,8 +48,9 @@ pub trait SchemeCtx {
 
     // ── Asynchronous methods ──────────────────────────────────────────────
 
-    /// Fetch the UTF-8 text content of an IPFS CID.
-    fn fetch_cid<'a>(&'a self, cid: &'a str) -> LocalBoxFuture<'a, Result<String, String>>;
+    /// Fetch the UTF-8 text content of a `/ipfs/<cid>`, `/ipns/<key>`,
+    /// `/ipld/<cid>` path, or a bare `did:ma:` DID.
+    fn fetch_path<'a>(&'a self, path: &'a str) -> LocalBoxFuture<'a, Result<String, String>>;
 
     /// Dispatch a fully-formed ma actor command and await the reply.
     ///

@@ -85,7 +85,9 @@ pub enum SchemeVal {
     Bool(bool),
     Nil,
     List(Vec<SchemeVal>),
-    /// A ma dot-path reference: `.my.aliases.sky`, `.my.doc.poem!publish`, etc.
+    /// A ma local config path reference (surface syntax `#/my…`, `#/ctx…`
+    /// inside zscheme expressions): `/my/aliases/sky`, `/my/doc/poem!publish`,
+    /// etc. Internally stored without the `#`.
     MaPath(String),
     /// A ma actor target: `@ma#house:enter`, `did:ma:abc#room:enter`, etc.
     MaActor(String),

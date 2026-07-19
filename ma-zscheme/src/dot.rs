@@ -1,55 +1,55 @@
-//! Dot-command parsing utilities.
+//! Path-command parsing utilities.
 //!
 //! `DotOp` and the associated parse functions are the canonical way to
-//! interpret dot-path commands.  They are shared across all `SchemeCtx`
-//! implementations so any host can call them without re-implementing the
-//! grammar.
+//! interpret local `/my`, `/ctx` path commands.  They are shared across all
+//! `SchemeCtx` implementations so any host can call them without
+//! re-implementing the grammar.
 
 use crate::DotRegistry;
 
 // ── DotOp ──────────────────────────────────────────────────────────────────
 
-/// The operation encoded in a dot-path command string.
+/// The operation encoded in a path command string.
 #[derive(Debug, Clone)]
 pub enum DotOp {
-    /// `.my.path` — return the stored value or list children.
+    /// `/my/path` — return the stored value or list children.
     Get,
-    /// `.my.path: value` — store `value` at the path.
+    /// `/my/path: value` — store `value` at the path.
     Set(String),
-    /// `.my.path:` — delete the subtree rooted at the path.
+    /// `/my/path:` — delete the subtree rooted at the path.
     Delete,
-    /// `.my.path!verb [args]` — dispatch a side-effect verb.
+    /// `/my/path!verb [args]` — dispatch a side-effect verb.
     Meta { verb: String, args: String },
 }
 
-/// Parse a dot-path command string into `(path, DotOp)`.
+/// Parse a path command string into `(path, DotOp)`.
 ///
 /// Formats:
-/// - `.my.path`            → `Get`
-/// - `.my.path: value`     → `Set("value")`
-/// - `.my.path:`           → `Delete`
-/// - `.my.path!verb args`  → `Meta { verb, args }`
+/// - `/my/path`            → `Get`
+/// - `/my/path: value`     → `Set("value")`
+/// - `/my/path:`           → `Delete`
+/// - `/my/path!verb args`  → `Meta { verb, args }`
 ///
-/// Returns `None` if the input is empty after stripping the leading `.`.
+/// Returns `None` if the input is empty after stripping the leading `/`.
 ///
 /// # Examples
 ///
 /// ```
 /// use ma_zscheme::{parse_dot_command, DotOp};
 ///
-/// let (path, op) = parse_dot_command(".my.i18n: nb").unwrap();
-/// assert_eq!(path, "my.i18n");
+/// let (path, op) = parse_dot_command("/my/i18n: nb").unwrap();
+/// assert_eq!(path, "my/i18n");
 /// assert!(matches!(op, DotOp::Set(v) if v == "nb"));
 ///
-/// let (path, op) = parse_dot_command(".my.aliases.sky").unwrap();
-/// assert_eq!(path, "my.aliases.sky");
+/// let (path, op) = parse_dot_command("/my/aliases/sky").unwrap();
+/// assert_eq!(path, "my/aliases/sky");
 /// assert!(matches!(op, DotOp::Get));
 /// ```
 #[must_use]
 pub fn parse_dot_command(command: &str) -> Option<(String, DotOp)> {
-    let s = command.trim().trim_start_matches('.');
+    let s = command.trim().trim_start_matches('/');
 
-    // Verb dispatch: .path!verb [args]
+    // Verb dispatch: /path!verb [args]
     if let Some(bang_idx) = s.find('!') {
         let path = s[..bang_idx].to_string();
         let rest = s[bang_idx + 1..].trim();
@@ -63,7 +63,7 @@ pub fn parse_dot_command(command: &str) -> Option<(String, DotOp)> {
         ));
     }
 
-    // Setter / Delete: find the first colon (dot-paths never contain colons).
+    // Setter / Delete: find the first colon (paths never contain colons).
     if let Some(colon_idx) = s.find(':') {
         let path = s[..colon_idx].to_string();
         let value = s[colon_idx + 1..].trim().to_string();
@@ -165,7 +165,8 @@ fn split_resolved_did_verb(s: &str) -> (String, String) {
 
 // ── Link detection ─────────────────────────────────────────────────────────
 
-/// Returns `true` if the string looks like an IPFS CID or `did:ma:` link.
+/// Returns `true` if the string is a `did:ma:` DID or a `/ipfs/`, `/ipns/`,
+/// `/ipld/` path.
 ///
 /// # Examples
 ///
@@ -173,17 +174,15 @@ fn split_resolved_did_verb(s: &str) -> (String, String) {
 /// use ma_zscheme::is_link_value;
 ///
 /// assert!(is_link_value("did:ma:abc"));
-/// assert!(is_link_value("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"));
+/// assert!(is_link_value("/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"));
 /// assert!(!is_link_value("hello world"));
 /// ```
 #[must_use]
 pub fn is_link_value(s: &str) -> bool {
     s.starts_with("did:ma:")
-        || s.starts_with("bafy")
-        || s.starts_with("bafk")
-        || s.starts_with("bafz")
-        || s.starts_with("bafei")
-        || s.starts_with("Qm")
+        || s.starts_with("/ipfs/")
+        || s.starts_with("/ipns/")
+        || s.starts_with("/ipld/")
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -195,50 +194,50 @@ mod tests {
 
     fn reg_with(name: &str, did: &str) -> InMemoryRegistry {
         let mut r = InMemoryRegistry::new();
-        r.set(&format!("my.aliases.{name}"), did);
+        r.set(&format!("my/aliases/{name}"), did);
         r
     }
 
-    // ── parse_dot_command ────────────────────────────────────────────────
+    // ── parse_dot_command ──────────────────────────────
 
     #[test]
     fn dot_get() {
-        let (path, op) = parse_dot_command(".my.aliases.sky").unwrap();
-        assert_eq!(path, "my.aliases.sky");
+        let (path, op) = parse_dot_command("/my/aliases/sky").unwrap();
+        assert_eq!(path, "my/aliases/sky");
         assert!(matches!(op, DotOp::Get));
     }
 
     #[test]
     fn dot_get_no_leading_dot() {
-        let (path, op) = parse_dot_command("my.i18n").unwrap();
-        assert_eq!(path, "my.i18n");
+        let (path, op) = parse_dot_command("my/i18n").unwrap();
+        assert_eq!(path, "my/i18n");
         assert!(matches!(op, DotOp::Get));
     }
 
     #[test]
     fn dot_set() {
-        let (path, op) = parse_dot_command(".my.i18n: nb").unwrap();
-        assert_eq!(path, "my.i18n");
+        let (path, op) = parse_dot_command("/my/i18n: nb").unwrap();
+        assert_eq!(path, "my/i18n");
         assert!(matches!(op, DotOp::Set(v) if v == "nb"));
     }
 
     #[test]
     fn dot_set_value_trimmed() {
-        let (_, op) = parse_dot_command(".my.i18n:   sv  ").unwrap();
+        let (_, op) = parse_dot_command("/my/i18n:   sv  ").unwrap();
         assert!(matches!(op, DotOp::Set(v) if v == "sv"));
     }
 
     #[test]
     fn dot_delete() {
-        let (path, op) = parse_dot_command(".my.i18n:").unwrap();
-        assert_eq!(path, "my.i18n");
+        let (path, op) = parse_dot_command("/my/i18n:").unwrap();
+        assert_eq!(path, "my/i18n");
         assert!(matches!(op, DotOp::Delete));
     }
 
     #[test]
     fn dot_meta_with_args() {
-        let (path, op) = parse_dot_command(".my.inbox.0!reply hello world").unwrap();
-        assert_eq!(path, "my.inbox.0");
+        let (path, op) = parse_dot_command("/my/inbox/0!reply hello world").unwrap();
+        assert_eq!(path, "my/inbox/0");
         assert!(matches!(
             op,
             DotOp::Meta { ref verb, ref args }
@@ -248,8 +247,8 @@ mod tests {
 
     #[test]
     fn dot_meta_no_args() {
-        let (path, op) = parse_dot_command(".my.doc.foo!eval").unwrap();
-        assert_eq!(path, "my.doc.foo");
+        let (path, op) = parse_dot_command("/my/doc/foo!eval").unwrap();
+        assert_eq!(path, "my/doc/foo");
         assert!(
             matches!(op, DotOp::Meta { ref verb, ref args } if verb == "eval" && args.is_empty())
         );
@@ -263,23 +262,30 @@ mod tests {
     }
 
     #[test]
-    fn link_bafy() {
+    fn link_ipfs() {
         assert!(is_link_value(
+            "/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+        ));
+    }
+
+    #[test]
+    fn link_ipns() {
+        assert!(is_link_value(
+            "/ipns/k51qzi5uqu5dgeb1kdz9fqvzhx2rmpe3fjb0k4jvpxvbn4bcnrfkfeoo9wisze"
+        ));
+    }
+
+    #[test]
+    fn link_ipld() {
+        assert!(is_link_value(
+            "/ipld/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+        ));
+    }
+
+    #[test]
+    fn not_link_bare_cid() {
+        assert!(!is_link_value(
             "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
-        ));
-    }
-
-    #[test]
-    fn link_bafk() {
-        assert!(is_link_value(
-            "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
-        ));
-    }
-
-    #[test]
-    fn link_qm() {
-        assert!(is_link_value(
-            "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
         ));
     }
 
