@@ -3,7 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags:
+      - "v*"
+      - "ma-zscheme-v*"
+      - "ma-zscheme-yaml-v*"
+      - "ma-zscheme-ipfs-v*"
   pull_request:
 
 env:

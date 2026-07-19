@@ -1,3 +1,6 @@
 [workspace]
 members = ["ma-zscheme", "ma-zscheme-yaml", "ma-zscheme-ipfs"]
 resolver = "2"
+
+[workspace.metadata.release]
+publish = false

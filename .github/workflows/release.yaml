@@ -5,6 +5,9 @@ on:
   push:
     tags:
       - "v*"
+      - "ma-zscheme-v*"
+      - "ma-zscheme-yaml-v*"
+      - "ma-zscheme-ipfs-v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -13,8 +16,10 @@ on:
       crate:
         description: "Crate to publish"
         required: true
+        default: all
         type: choice
         options:
+          - all
           - ma-zscheme
           - ma-zscheme-yaml
           - ma-zscheme-ipfs
@@ -101,8 +106,42 @@ jobs:
         id: auth
         uses: rust-lang/crates-io-auth-action@v1.0.4
 
+      - name: Resolve crates to publish
+        id: crates
+        run: |
+          crate="${{ github.event.inputs.crate }}"
+          tag="${{ steps.tag.outputs.name }}"
+
+          if [[ -z "$crate" ]]; then
+            case "$tag" in
+              ma-zscheme-v*) crate="ma-zscheme" ;;
+              ma-zscheme-yaml-v*) crate="ma-zscheme-yaml" ;;
+              ma-zscheme-ipfs-v*) crate="ma-zscheme-ipfs" ;;
+              v*) crate="all" ;;
+            esac
+          fi
+
+          if [[ -z "$crate" || "$crate" == "all" ]]; then
+            echo 'names=ma-zscheme ma-zscheme-yaml ma-zscheme-ipfs' >> "$GITHUB_OUTPUT"
+          else
+            echo "names=$crate" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to crates.io
-        run: cargo publish -p ${{ github.event.inputs.crate }} --no-verify
+        run: |
+          for crate in ${{ steps.crates.outputs.names }}; do
+            for attempt in {1..5}; do
+              if cargo publish -p "$crate" --no-verify; then
+                break
+              fi
+
+              if [[ "$attempt" == "5" ]]; then
+                exit 1
+              fi
+
+              sleep 30
+            done
+          done
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
