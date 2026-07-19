@@ -1,6 +1,6 @@
 [package]
 name = "ma-zscheme-ipfs"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.82"
 description = "IPFS-backed DotRegistry for ma-zscheme"
@@ -9,4 +9,4 @@ repository = "https://github.com/bahner/rust-ma-zscheme"
 keywords = ["scheme", "ipfs", "config", "actor"]
 
 [dependencies]
-ma-zscheme = { path = "../ma-zscheme", version = "0.1" }
+ma-zscheme = { path = "../ma-zscheme", version = "0.2" }
