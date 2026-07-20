@@ -1,6 +1,6 @@
 [package]
 name = "ma-zscheme-yaml"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 rust-version = "1.82"
 description = "YAML/file-backed DotRegistry for ma-zscheme"
@@ -10,7 +10,7 @@ keywords = ["scheme", "config", "yaml", "actor"]
 
 [dependencies]
 anyhow = "1"
-ma-zscheme = "0.2"
+ma-zscheme = { version = "0.3", path = "../ma-zscheme" }
 directories = "5"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
