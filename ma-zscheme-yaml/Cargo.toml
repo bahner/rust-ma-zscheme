@@ -1,6 +1,6 @@
 [package]
 name = "ma-zscheme-yaml"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.82"
 description = "YAML/file-backed DotRegistry for ma-zscheme"
