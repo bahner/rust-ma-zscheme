@@ -1,4 +1,4 @@
-//! `DotRegistry` — pluggable backing store for `/`-path config.
+//! `DotRegistry` — pluggable backing store for local dot-path config.
 //!
 //! Implement this trait to connect any key-value store (flat file, IPFS,
 //! database, or an in-memory map) to the evaluator.  The evaluator never
@@ -12,8 +12,10 @@
 //! use ma_zscheme::registry::{DotRegistry, InMemoryRegistry};
 //!
 //! let mut reg = InMemoryRegistry::default();
-//! reg.set("my/aliases/sky", "did:ma:abc");
+//! reg.set(".my.aliases.sky", "did:ma:abc");
 //! assert_eq!(reg.resolve_alias("sky"), Some("did:ma:abc".to_string()));
+//! assert_eq!(reg.get("my/aliases/sky"), Some("did:ma:abc".to_string()));
+//! assert_eq!(reg.list(".my.aliases")[0].0, ".my.aliases.sky");
 //! ```
 //!
 //! # Extension points
@@ -21,7 +23,7 @@
 //! The trait has two provided methods with sensible defaults:
 //!
 //! - [`is_read_only`][DotRegistry::is_read_only] — override to protect keys
-//!   (e.g. `EgoConfig` protects `/my/identity/*`).
+//!   (e.g. `EgoConfig` protects `.my.identity.*`).
 //! - [`resolve_target`][DotRegistry::resolve_target] — override if your alias
 //!   lookup differs from the standard `my/aliases/<name>` convention.
 //!
@@ -32,9 +34,9 @@ use std::collections::HashMap;
 
 // ── Trait ──────────────────────────────────────────────────────────────────
 
-/// Pluggable `/`-path key-value store.
+/// Pluggable local dot-path key-value store.
 ///
-/// Keys may be passed with or without a leading `/`; each implementation is
+/// Keys may be passed as `.my.aliases.sky`, `/my/aliases/sky`, or `my/aliases/sky`; each implementation is
 /// expected to normalise internally (see [`normalize_key`]).
 pub trait DotRegistry {
     /// Return the value stored at `path`, or `None` if absent.
@@ -44,12 +46,12 @@ pub trait DotRegistry {
     fn set(&mut self, path: &str, value: &str);
 
     /// Delete the exact key at `path` **and** every key that has it as a
-    /// `/`-prefix (i.e. the whole subtree rooted at `path`).
+    /// internal `/`-prefix (i.e. the whole subtree rooted at `path`).
     fn delete_subtree(&mut self, path: &str);
 
     /// List all `(key, value)` pairs whose key begins with `prefix` (exact
     /// match or `prefix/`-prefixed children). Keys in the returned pairs are
-    /// normalised with a leading `/`.
+    /// normalised to dot form.
     fn list(&self, prefix: &str) -> Vec<(String, String)>;
 
     /// Resolve an alias name (with or without leading `@`) to the stored DID.
@@ -64,7 +66,7 @@ pub trait DotRegistry {
     /// Whether this path is read-only (writes and deletes should be rejected).
     ///
     /// Default: all paths are writable. Override in stores that protect
-    /// certain keys (e.g. `EgoConfig` protects `/my/identity/*`).
+    /// certain keys (e.g. `EgoConfig` protects `.my.identity.*`).
     fn is_read_only(&self, _path: &str) -> bool {
         false
     }
@@ -140,7 +142,7 @@ impl DotRegistry for InMemoryRegistry {
             .data
             .iter()
             .filter(|(k, _)| k.as_str() == key || k.starts_with(&prefix_slash))
-            .map(|(k, v)| (format!("/{k}"), v.clone()))
+            .map(|(k, v)| (format!(".{}", k.replace('/', ".")), v.clone()))
             .collect();
         pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
         pairs
@@ -152,7 +154,7 @@ impl DotRegistry for InMemoryRegistry {
 /// Strip leading `/` from a path key for normalised internal storage.
 #[must_use]
 pub fn normalize_key(path: &str) -> String {
-    path.trim_start_matches('/').to_string()
+    path.trim_start_matches(['/', '.']).replace('.', "/")
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -176,12 +178,13 @@ mod tests {
     }
 
     #[test]
-    fn leading_slash_normalised_on_set() {
+    fn leading_prefix_normalised_on_set() {
         let mut r = InMemoryRegistry::new();
-        r.set("/my/i18n", "nb");
-        // readable both with and without leading slash
+        r.set(".my.i18n", "nb");
+        // readable with internal, slash, and dot forms
         assert_eq!(r.get("my/i18n"), Some("nb".into()));
         assert_eq!(r.get("/my/i18n"), Some("nb".into()));
+        assert_eq!(r.get(".my.i18n"), Some("nb".into()));
     }
 
     #[test]
@@ -228,8 +231,8 @@ mod tests {
         r.set("my/i18n", "nb");
         let pairs = r.list("my/aliases");
         assert_eq!(pairs.len(), 2);
-        assert!(pairs.iter().any(|(k, _)| k == "/my/aliases/ms"));
-        assert!(pairs.iter().any(|(k, _)| k == "/my/aliases/sky"));
+        assert!(pairs.iter().any(|(k, _)| k == ".my.aliases.ms"));
+        assert!(pairs.iter().any(|(k, _)| k == ".my.aliases.sky"));
     }
 
     #[test]
@@ -238,8 +241,8 @@ mod tests {
         r.set("my/aliases/z", "did:ma:z");
         r.set("my/aliases/a", "did:ma:a");
         let pairs = r.list("my/aliases");
-        assert_eq!(pairs[0].0, "/my/aliases/a");
-        assert_eq!(pairs[1].0, "/my/aliases/z");
+        assert_eq!(pairs[0].0, ".my.aliases.a");
+        assert_eq!(pairs[1].0, ".my.aliases.z");
     }
 
     #[test]

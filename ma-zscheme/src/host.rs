@@ -18,9 +18,9 @@ pub trait SchemeCtx {
 
     /// Evaluate a ma local config path and return the result as a `SchemeVal`.
     ///
-    /// Handles get (`/my/path`), set (`/my/path: value`),
-    /// delete (`/my/path:`), and meta-verbs (`/my/path!verb args`).
-    /// Only ever called for local roots (`/my`, `/ctx`) — `/ipfs`, `/ipns`,
+    /// Handles get (`.my.path`), set (`.my.path: value`),
+    /// delete (`.my.path:`), and meta-verbs (`.my.path!verb args`).
+    /// Only ever called for local roots (`.my`, `.ctx`) — `/ipfs`, `/ipns`,
     /// `/ipld` are routed to [`fetch_path`][Self::fetch_path] instead.
     ///
     /// # Errors

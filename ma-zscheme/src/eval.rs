@@ -16,7 +16,7 @@ use crate::value::{Env, SchemeVal};
 /// True if `s` looks like an IPFS CID or a `did:ma:` DID.
 /// True if `s` is a `did:ma:` DID or a `/ipfs/…`, `/ipns/…`, `/ipld/…` path.
 /// Used to decide whether a path or `` `include` `` argument should be
-/// fetched remotely rather than read from local `/my` / `/ctx` config.
+/// fetched remotely rather than read from local `.my` / `.ctx` config.
 #[must_use]
 pub fn is_link_value(s: &str) -> bool {
     s.starts_with("did:ma:")
@@ -114,19 +114,20 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
             SchemeExpr::Nil => return Ok(SchemeVal::Nil),
             SchemeExpr::Str(s) => return Ok(SchemeVal::Str(s)),
             SchemeExpr::Atom(s) => {
-                // ma path atom in value position: #/my/…, #/ctx/…,
-                // #/ipfs/…, #/ipns/…, #/ipld/… — `#/` avoids colliding with
-                // the `/` division builtin.
+                // ma local config path atom in value position: .my.…, .ctx.…
+                if s.starts_with('.') {
+                    return ctx.eval_dot(&s);
+                }
+                // Remote path atom in value position: #/ipfs/…, #/ipns/…, #/ipld/….
                 if let Some(rest) = s.strip_prefix("#/") {
                     let path = format!("/{rest}");
-                    return if is_link_value(&path) {
-                        ctx.fetch_path(&path)
+                    if is_link_value(&path) {
+                        return ctx
+                            .fetch_path(&path)
                             .await
                             .map(SchemeVal::Str)
-                            .map_err(SchemeErr::MaError)
-                    } else {
-                        ctx.eval_dot(&path)
-                    };
+                            .map_err(SchemeErr::MaError);
+                    }
                 }
                 return eval_atom(&s, &env);
             }
@@ -509,18 +510,11 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                     return eval_pipe(forms, env, ctx).await;
                 }
 
-                // ── ma path in head position (#/my, #/ctx, #/ipfs, #/ipns, #/ipld) ──
+                // ── ma local config path in head position (.my, .ctx) ──
                 if let SchemeExpr::Atom(head) = &forms[0] {
-                    if let Some(rest) = head.strip_prefix("#/") {
-                        let path = format!("/{rest}");
+                    if head.starts_with('.') {
+                        let path = head.clone();
                         if forms.len() == 1 {
-                            if is_link_value(&path) {
-                                return ctx
-                                    .fetch_path(&path)
-                                    .await
-                                    .map(SchemeVal::Str)
-                                    .map_err(SchemeErr::MaError);
-                            }
                             let val = ctx.eval_dot(&path)?;
                             if let SchemeVal::Str(ref s) = val {
                                 if s.trim_start().starts_with('(') {
@@ -534,17 +528,28 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                             }
                             return Ok(val);
                         }
-                        if is_link_value(&path) {
-                            return Err(SchemeErr::Runtime(format!(
-                                "{path} is read-only and does not accept arguments"
-                            )));
-                        }
                         let mapath = SchemeVal::MaPath(path);
                         let mut args = Vec::with_capacity(forms.len() - 1);
                         for form in &forms[1..] {
                             args.push(eval(form.clone(), env.clone(), ctx.clone()).await?);
                         }
                         return apply(mapath, args, ctx).await;
+                    }
+                    // ── remote path in head position (#/ipfs, #/ipns, #/ipld) ──
+                    if let Some(rest) = head.strip_prefix("#/") {
+                        let path = format!("/{rest}");
+                        if is_link_value(&path) {
+                            if forms.len() == 1 {
+                                return ctx
+                                    .fetch_path(&path)
+                                    .await
+                                    .map(SchemeVal::Str)
+                                    .map_err(SchemeErr::MaError);
+                            }
+                            return Err(SchemeErr::Runtime(format!(
+                                "{path} is read-only and does not accept arguments"
+                            )));
+                        }
                     }
                 }
 
@@ -1694,7 +1699,7 @@ fn apply_builtin(
                 };
                 let content = if is_link_value(&path) {
                     ctx.fetch_path(&path).await.map_err(SchemeErr::MaError)?
-                } else if path.starts_with('/') {
+                } else if path.starts_with('.') {
                     match ctx.eval_dot(&path)? {
                         SchemeVal::Str(s) => s,
                         _ => {
@@ -1877,9 +1882,29 @@ fn extract_rest_param(mut params: Vec<String>) -> (Vec<String>, Option<String>) 
 fn expr_to_val(expr: &SchemeExpr) -> SchemeVal {
     match expr {
         SchemeExpr::Nil => SchemeVal::Nil,
-        SchemeExpr::Str(s) | SchemeExpr::Atom(s) => SchemeVal::Str(s.clone()),
+        SchemeExpr::Str(s) => SchemeVal::Str(s.clone()),
+        SchemeExpr::Atom(s) => atom_literal_to_val(s),
         SchemeExpr::List(forms) => SchemeVal::List(forms.iter().map(expr_to_val).collect()),
     }
+}
+
+fn atom_literal_to_val(s: &str) -> SchemeVal {
+    if let Ok(n) = s.parse::<i64>() {
+        return SchemeVal::Int(n);
+    }
+    if let Ok(f) = s.parse::<f64>() {
+        return SchemeVal::Float(f);
+    }
+    if s == "#t" || s == "true" {
+        return SchemeVal::Bool(true);
+    }
+    if s == "#f" || s == "false" {
+        return SchemeVal::Bool(false);
+    }
+    if s == "nil" || s == "()" {
+        return SchemeVal::Nil;
+    }
+    SchemeVal::Str(s.to_string())
 }
 
 // ── Reply tuple constructors ───────────────────────────────────────────────
@@ -1930,16 +1955,21 @@ mod tests {
     use crate::host::SchemeCtx;
     use crate::value::Env;
     use futures::{channel::oneshot, future::LocalBoxFuture};
+    use std::cell::RefCell;
     use std::rc::Rc;
 
     // ── Minimal host ──────────────────────────────────────────────────────
 
     /// A no-op `SchemeCtx` for unit tests.
     /// Dot-paths return `Nil`; actor calls and IPFS fetches return errors.
-    struct TestCtx;
+    #[derive(Default)]
+    struct TestCtx {
+        dot_commands: RefCell<Vec<String>>,
+    }
 
     impl SchemeCtx for TestCtx {
-        fn eval_dot(&self, _command: &str) -> Result<SchemeVal, SchemeErr> {
+        fn eval_dot(&self, command: &str) -> Result<SchemeVal, SchemeErr> {
+            self.dot_commands.borrow_mut().push(command.to_string());
             Ok(SchemeVal::Nil)
         }
         fn display_output(&self, _text: &str) {}
@@ -1986,7 +2016,7 @@ mod tests {
     }
 
     fn ctx() -> Ctx {
-        Rc::new(TestCtx)
+        Rc::new(TestCtx::default())
     }
 
     /// Evaluate all top-level forms in `src` and return the last value.
@@ -1999,6 +2029,11 @@ mod tests {
     fn run_res(src: &str) -> Result<SchemeVal, SchemeErr> {
         let env = Env::new_root();
         futures::executor::block_on(eval_source_in_env(src, env, ctx()))
+    }
+
+    fn run_with_ctx(src: &str, ctx: Ctx) -> Result<SchemeVal, SchemeErr> {
+        let env = Env::new_root();
+        futures::executor::block_on(eval_source_in_env(src, env, ctx))
     }
 
     // ── is_link_value ─────────────────────────────────────────────────────
@@ -2030,6 +2065,27 @@ mod tests {
         assert!(!is_link_value(
             "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
         ));
+    }
+
+    #[test]
+    fn dot_path_head_routes_dot_command_to_host() {
+        let test_ctx = Rc::new(TestCtx::default());
+        run_with_ctx("(.my.i18n)", test_ctx.clone()).unwrap();
+        assert_eq!(test_ctx.dot_commands.borrow().as_slice(), [".my.i18n"]);
+    }
+
+    #[test]
+    fn dot_path_set_routes_dot_command_to_host() {
+        let test_ctx = Rc::new(TestCtx::default());
+        run_with_ctx("(.my.i18n: \"nb\")", test_ctx.clone()).unwrap();
+        assert_eq!(test_ctx.dot_commands.borrow().as_slice(), [".my.i18n: nb"]);
+    }
+
+    #[test]
+    fn legacy_hash_slash_my_is_not_local_config() {
+        let test_ctx = Rc::new(TestCtx::default());
+        assert!(run_with_ctx("(#/my/i18n)", test_ctx.clone()).is_err());
+        assert!(test_ctx.dot_commands.borrow().is_empty());
     }
 
     // ── Atoms & literals ──────────────────────────────────────────────────
@@ -2467,6 +2523,67 @@ mod tests {
     #[test]
     fn quote_shorthand() {
         assert!(matches!(run("'bar"), SchemeVal::Str(s) if s == "bar"));
+    }
+
+    #[test]
+    fn quote_preserves_number_literals_in_lists() {
+        assert!(matches!(run("(car '(1 2 3))"), SchemeVal::Int(1)));
+        assert!(matches!(run("(apply + '(1 2 3))"), SchemeVal::Int(6)));
+    }
+
+    #[test]
+    fn quote_preserves_bool_and_nil_literals_in_lists() {
+        assert!(matches!(run("(car '(#t #f nil))"), SchemeVal::Bool(true)));
+        assert!(matches!(run("(cadr '(#t #f nil))"), SchemeVal::Bool(false)));
+        assert!(matches!(run("(caddr '(#t #f nil))"), SchemeVal::Nil));
+    }
+
+    #[test]
+    fn string_index_and_number_conversion() {
+        assert!(matches!(
+            run(r#"(string-index "alice@sky#room" "@")"#),
+            SchemeVal::Int(5)
+        ));
+        assert!(matches!(
+            run(r#"(string-index "alice@sky#room" ":")"#),
+            SchemeVal::Bool(false)
+        ));
+        assert!(matches!(
+            run(r#"(string->number "42")"#),
+            SchemeVal::Int(42)
+        ));
+        assert!(
+            matches!(run(r#"(string->number "3.5")"#), SchemeVal::Float(f) if (f - 3.5).abs() < 1e-10)
+        );
+        assert!(matches!(
+            run(r#"(string->number "nope")"#),
+            SchemeVal::Bool(false)
+        ));
+    }
+
+    #[test]
+    fn map_set_returns_updated_map_without_mutating_original() {
+        let src = r#"
+            (define original (make-map "name" "Garden" "players" 3))
+            (define updated (map-set original "players" 4))
+            (assert (= (map-ref original "players") 3))
+            (map-ref updated "players")
+        "#;
+        assert!(matches!(run(src), SchemeVal::Int(4)));
+    }
+
+    #[test]
+    fn ok_and_error_tuple_helpers() {
+        assert!(matches!(
+            run(r#"(ok? '(:ok "done"))"#),
+            SchemeVal::Bool(true)
+        ));
+        assert!(matches!(run(r#"(ok-val '(:ok "done"))"#), SchemeVal::Str(s) if s == "done"));
+        assert!(matches!(
+            run(r#"(err? '(:error "bad"))"#),
+            SchemeVal::Bool(true)
+        ));
+        assert!(matches!(run(r#"(err-msg '(:error "bad"))"#), SchemeVal::Str(s) if s == "bad"));
     }
 
     // ── guard form ────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 //! YAML/file-backed [`DotRegistry`] for ma-zscheme.
 //!
-//! `SchemeConfig` stores `/`-path key-value pairs in a YAML file under
+//! `SchemeConfig` stores dot-path key-value pairs in a YAML file under
 //! `$XDG_CONFIG_HOME/ma/zscheme-data.yaml`.  It is the default persistent
 //! backend for the `zscheme` CLI.
 //!
@@ -72,7 +72,7 @@ impl SchemeConfig {
         Ok(base.config_dir().join("ma").join("zscheme-data.yaml"))
     }
 
-    /// Get a value at `path` (leading `/` optional).
+    /// Get a value at `path` (leading `.` or `/` optional).
     #[must_use]
     pub fn get_str(&self, path: &str) -> Option<String> {
         self.data.get(&normalize_key(path)).cloned()
@@ -100,7 +100,7 @@ impl SchemeConfig {
             .data
             .iter()
             .filter(|(k, _)| k.starts_with(&prefix) || *k == &key)
-            .map(|(k, v)| (format!("/{k}"), v.clone()))
+            .map(|(k, v)| (format!(".{}", k.replace('/', ".")), v.clone()))
             .collect();
         pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
         pairs
@@ -141,9 +141,9 @@ impl DotRegistry for SchemeConfig {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/// Strip leading `/` from a path key for internal storage.
+/// Convert a user-facing dot path or slash path to internal slash storage.
 fn normalize_key(path: &str) -> String {
-    path.trim_start_matches('/').to_string()
+    path.trim_start_matches(['/', '.']).replace('.', "/")
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -168,16 +168,17 @@ mod tests {
     }
 
     #[test]
-    fn get_str_leading_slash_stripped() {
+    fn get_str_leading_prefix_stripped() {
         let mut cfg = SchemeConfig::new();
         cfg.set("my/i18n", "nb");
         assert_eq!(cfg.get_str("/my/i18n"), Some("nb".into()));
+        assert_eq!(cfg.get_str(".my.i18n"), Some("nb".into()));
     }
 
     #[test]
-    fn set_with_leading_slash() {
+    fn set_with_leading_dot() {
         let mut cfg = SchemeConfig::new();
-        cfg.set("/my/i18n", "nb");
+        cfg.set(".my.i18n", "nb");
         assert_eq!(cfg.get_str("my/i18n"), Some("nb".into()));
     }
 
@@ -186,9 +187,10 @@ mod tests {
     #[test]
     fn trait_get_and_set() {
         let mut cfg = SchemeConfig::new();
-        DotRegistry::set(&mut cfg, "/my/i18n", "sv");
+        DotRegistry::set(&mut cfg, ".my.i18n", "sv");
         assert_eq!(DotRegistry::get(&cfg, "my/i18n"), Some("sv".into()));
         assert_eq!(DotRegistry::get(&cfg, "/my/i18n"), Some("sv".into()));
+        assert_eq!(DotRegistry::get(&cfg, ".my.i18n"), Some("sv".into()));
     }
 
     // ── delete_subtree ────────────────────────────────────────────────────
@@ -230,8 +232,8 @@ mod tests {
         cfg.set("my/aliases/a", "did:ma:a");
         let pairs = DotRegistry::list(&cfg, "my/aliases");
         assert_eq!(pairs.len(), 2);
-        assert_eq!(pairs[0].0, "/my/aliases/a");
-        assert_eq!(pairs[1].0, "/my/aliases/z");
+        assert_eq!(pairs[0].0, ".my.aliases.a");
+        assert_eq!(pairs[1].0, ".my.aliases.z");
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! - Proper tail-call optimisation (TCO) via an explicit `'tco` loop
 //! - Named `let` (`let loop …`)
 //! - `apply` as a first-class procedure
-//! - ma-specific primitives: local config paths (`#/my/path`, `#/ctx/path`),
+//! - ma-specific primitives: local config paths (`.my.path`, `.ctx.path`),
 //!   actor calls (`@alias` / `did:ma:…`), and remote fetch paths
 //!   (`#/ipfs/…`, `#/ipns/…`, `#/ipld/…`)
 //! - Pipe threading (`val | (f arg) | g`)

@@ -1,7 +1,7 @@
-//! Path-command parsing utilities.
+//! Dot-command parsing utilities.
 //!
 //! `DotOp` and the associated parse functions are the canonical way to
-//! interpret local `/my`, `/ctx` path commands.  They are shared across all
+//! interpret local `.my`, `.ctx` path commands.  They are shared across all
 //! `SchemeCtx` implementations so any host can call them without
 //! re-implementing the grammar.
 
@@ -12,23 +12,23 @@ use crate::DotRegistry;
 /// The operation encoded in a path command string.
 #[derive(Debug, Clone)]
 pub enum DotOp {
-    /// `/my/path` — return the stored value or list children.
+    /// `.my.path` — return the stored value or list children.
     Get,
-    /// `/my/path: value` — store `value` at the path.
+    /// `.my.path: value` — store `value` at the path.
     Set(String),
-    /// `/my/path:` — delete the subtree rooted at the path.
+    /// `.my.path:` — delete the subtree rooted at the path.
     Delete,
-    /// `/my/path!verb [args]` — dispatch a side-effect verb.
+    /// `.my.path!verb [args]` — dispatch a side-effect verb.
     Meta { verb: String, args: String },
 }
 
 /// Parse a path command string into `(path, DotOp)`.
 ///
 /// Formats:
-/// - `/my/path`            → `Get`
-/// - `/my/path: value`     → `Set("value")`
-/// - `/my/path:`           → `Delete`
-/// - `/my/path!verb args`  → `Meta { verb, args }`
+/// - `.my.path`            → `Get`
+/// - `.my.path: value`     → `Set("value")`
+/// - `.my.path:`           → `Delete`
+/// - `.my.path!verb args`  → `Meta { verb, args }`
 ///
 /// Returns `None` if the input is empty after stripping the leading `/`.
 ///
@@ -37,19 +37,22 @@ pub enum DotOp {
 /// ```
 /// use ma_zscheme::{parse_dot_command, DotOp};
 ///
-/// let (path, op) = parse_dot_command("/my/i18n: nb").unwrap();
+/// let (path, op) = parse_dot_command(".my.i18n: nb").unwrap();
 /// assert_eq!(path, "my/i18n");
 /// assert!(matches!(op, DotOp::Set(v) if v == "nb"));
 ///
-/// let (path, op) = parse_dot_command("/my/aliases/sky").unwrap();
+/// let (path, op) = parse_dot_command(".my.aliases.sky").unwrap();
 /// assert_eq!(path, "my/aliases/sky");
 /// assert!(matches!(op, DotOp::Get));
+///
+/// assert!(parse_dot_command("/my/aliases/sky").is_none());
+/// assert!(parse_dot_command("my/aliases/sky").is_none());
 /// ```
 #[must_use]
 pub fn parse_dot_command(command: &str) -> Option<(String, DotOp)> {
-    let s = command.trim().trim_start_matches('/');
+    let s = normalize_command_path(command.trim())?;
 
-    // Verb dispatch: /path!verb [args]
+    // Verb dispatch: .path!verb [args]
     if let Some(bang_idx) = s.find('!') {
         let path = s[..bang_idx].to_string();
         let rest = s[bang_idx + 1..].trim();
@@ -74,7 +77,15 @@ pub fn parse_dot_command(command: &str) -> Option<(String, DotOp)> {
     }
 
     // Get
-    Some((s.to_string(), DotOp::Get))
+    Some((s.clone(), DotOp::Get))
+}
+
+fn normalize_command_path(command: &str) -> Option<String> {
+    let command = command.strip_prefix('.')?;
+    if command.is_empty() || command.starts_with('.') {
+        return None;
+    }
+    Some(command.replace('.', "/"))
 }
 
 // ── Actor command parsing ──────────────────────────────────────────────────
@@ -202,41 +213,40 @@ mod tests {
 
     #[test]
     fn dot_get() {
-        let (path, op) = parse_dot_command("/my/aliases/sky").unwrap();
+        let (path, op) = parse_dot_command(".my.aliases.sky").unwrap();
         assert_eq!(path, "my/aliases/sky");
         assert!(matches!(op, DotOp::Get));
     }
 
     #[test]
-    fn dot_get_no_leading_dot() {
-        let (path, op) = parse_dot_command("my/i18n").unwrap();
-        assert_eq!(path, "my/i18n");
-        assert!(matches!(op, DotOp::Get));
+    fn dot_get_requires_leading_dot() {
+        assert!(parse_dot_command("my/i18n").is_none());
+        assert!(parse_dot_command("/my/i18n").is_none());
     }
 
     #[test]
     fn dot_set() {
-        let (path, op) = parse_dot_command("/my/i18n: nb").unwrap();
+        let (path, op) = parse_dot_command(".my.i18n: nb").unwrap();
         assert_eq!(path, "my/i18n");
         assert!(matches!(op, DotOp::Set(v) if v == "nb"));
     }
 
     #[test]
     fn dot_set_value_trimmed() {
-        let (_, op) = parse_dot_command("/my/i18n:   sv  ").unwrap();
+        let (_, op) = parse_dot_command(".my.i18n:   sv  ").unwrap();
         assert!(matches!(op, DotOp::Set(v) if v == "sv"));
     }
 
     #[test]
     fn dot_delete() {
-        let (path, op) = parse_dot_command("/my/i18n:").unwrap();
+        let (path, op) = parse_dot_command(".my.i18n:").unwrap();
         assert_eq!(path, "my/i18n");
         assert!(matches!(op, DotOp::Delete));
     }
 
     #[test]
     fn dot_meta_with_args() {
-        let (path, op) = parse_dot_command("/my/inbox/0!reply hello world").unwrap();
+        let (path, op) = parse_dot_command(".my.inbox.0!reply hello world").unwrap();
         assert_eq!(path, "my/inbox/0");
         assert!(matches!(
             op,
@@ -247,7 +257,7 @@ mod tests {
 
     #[test]
     fn dot_meta_no_args() {
-        let (path, op) = parse_dot_command("/my/doc/foo!eval").unwrap();
+        let (path, op) = parse_dot_command(".my.doc.foo!eval").unwrap();
         assert_eq!(path, "my/doc/foo");
         assert!(
             matches!(op, DotOp::Meta { ref verb, ref args } if verb == "eval" && args.is_empty())
