@@ -1,7 +1,12 @@
 #![allow(dead_code)]
 /// Scheme values and lexically-scoped environments for zscheme.
 /// Ported from ma-agent/src/scheme/value.rs.
-use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, HashMap},
+    fmt,
+    rc::Rc,
+};
 
 use crate::parser::SchemeExpr;
 
@@ -85,6 +90,7 @@ pub enum SchemeVal {
     Bool(bool),
     Nil,
     List(Vec<SchemeVal>),
+    Map(BTreeMap<String, SchemeVal>),
     /// A ma local config path reference (surface syntax `#/my…`, `#/ctx…`
     /// inside zscheme expressions): `/my/aliases/sky`, `/my/doc/poem!publish`,
     /// etc. Internally stored without the `#`.
@@ -114,6 +120,13 @@ impl SchemeVal {
                 let inner: Vec<_> = v.iter().map(SchemeVal::repr).collect();
                 format!("({})", inner.join(" "))
             }
+            SchemeVal::Map(m) => {
+                let inner: Vec<_> = m
+                    .iter()
+                    .map(|(k, v)| format!("({k:?} . {})", v.repr()))
+                    .collect();
+                format!("#<map ({})>", inner.join(" "))
+            }
             SchemeVal::MaPath(p) => p.clone(),
             SchemeVal::MaActor(a) => a.clone(),
             SchemeVal::Builtin(n) => format!("#<procedure:{n}>"),
@@ -139,6 +152,7 @@ impl SchemeVal {
                 .map(SchemeVal::to_splice_lossy)
                 .collect::<Vec<_>>()
                 .join(" "),
+            SchemeVal::Map(_) => self.display(),
             other => other.display(),
         }
     }
@@ -256,6 +270,17 @@ mod tests {
         assert_eq!(v.display(), "(1 2)");
     }
 
+    #[test]
+    fn display_map() {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "north".to_string(),
+            SchemeVal::Str("did:ma:room#exit".to_string()),
+        );
+        let v = SchemeVal::Map(map);
+        assert_eq!(v.display(), "#<map ((\"north\" . \"did:ma:room#exit\"))>");
+    }
+
     // ── SchemeVal::repr ──
 
     #[test]
@@ -295,6 +320,16 @@ mod tests {
     fn to_splice_lossy_list_space_joined() {
         let v = SchemeVal::List(vec![SchemeVal::Str("a".into()), SchemeVal::Str("b".into())]);
         assert_eq!(v.to_splice_lossy(), "a b");
+    }
+
+    #[test]
+    fn to_splice_lossy_map_displays_map() {
+        let mut map = BTreeMap::new();
+        map.insert("a".to_string(), SchemeVal::Int(1));
+        assert_eq!(
+            SchemeVal::Map(map).to_splice_lossy(),
+            "#<map ((\"a\" . 1))>"
+        );
     }
 
     // ── SchemeVal::to_splice ──

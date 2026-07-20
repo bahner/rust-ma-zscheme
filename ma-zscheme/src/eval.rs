@@ -3,6 +3,8 @@
 /// Platform-agnostic: runs on both native (`tokio` `LocalSet`) and WASM (browser
 /// event loop via `gloo_timers`) using `LocalBoxFuture`.
 /// Host-specific behaviour is abstracted through `crate::host::SchemeCtx`.
+use std::collections::BTreeMap;
+
 use futures::future::LocalBoxFuture;
 
 use crate::host::Ctx;
@@ -665,6 +667,16 @@ fn is_builtin(name: &str) -> bool {
             | "list-ref"
             | "null?"
             | "pair?"
+            | "map?"
+            | "make-map"
+            | "map-ref"
+            | "map-set"
+            | "map-delete"
+            | "map-has-key?"
+            | "map-keys"
+            | "map-values"
+            | "map->alist"
+            | "alist->map"
             | "string?"
             | "number?"
             | "boolean?"
@@ -1243,6 +1255,99 @@ fn apply_builtin(
                     matches!(&args[0], SchemeVal::List(v) if !v.is_empty()),
                 ))
             }
+            "map?" => {
+                arity("map?", &args, 1)?;
+                Ok(SchemeVal::Bool(matches!(&args[0], SchemeVal::Map(_))))
+            }
+            "make-map" => {
+                if args.len() % 2 != 0 {
+                    return Err(SchemeErr::Runtime(format!(
+                        "make-map: expected an even number of key/value arguments, got {}",
+                        args.len()
+                    )));
+                }
+                let mut map = BTreeMap::new();
+                for pair in args.chunks(2) {
+                    let key = str_arg(&pair[0], "make-map")?;
+                    map.insert(key, pair[1].clone());
+                }
+                Ok(SchemeVal::Map(map))
+            }
+            "map-ref" => {
+                if !(args.len() == 2 || args.len() == 3) {
+                    return Err(SchemeErr::Runtime(format!(
+                        "map-ref: expected 2 or 3 arguments, got {}",
+                        args.len()
+                    )));
+                }
+                let map = map_arg(&args[0], "map-ref")?;
+                let key = str_arg(&args[1], "map-ref")?;
+                Ok(map
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(|| args.get(2).cloned().unwrap_or(SchemeVal::Bool(false))))
+            }
+            "map-set" => {
+                arity("map-set", &args, 3)?;
+                let mut map = map_arg(&args[0], "map-set")?;
+                let key = str_arg(&args[1], "map-set")?;
+                map.insert(key, args[2].clone());
+                Ok(SchemeVal::Map(map))
+            }
+            "map-delete" => {
+                arity("map-delete", &args, 2)?;
+                let mut map = map_arg(&args[0], "map-delete")?;
+                let key = str_arg(&args[1], "map-delete")?;
+                map.remove(&key);
+                Ok(SchemeVal::Map(map))
+            }
+            "map-has-key?" => {
+                arity("map-has-key?", &args, 2)?;
+                let map = map_arg(&args[0], "map-has-key?")?;
+                let key = str_arg(&args[1], "map-has-key?")?;
+                Ok(SchemeVal::Bool(map.contains_key(&key)))
+            }
+            "map-keys" => {
+                arity("map-keys", &args, 1)?;
+                let map = map_arg(&args[0], "map-keys")?;
+                Ok(SchemeVal::List(
+                    map.keys().cloned().map(SchemeVal::Str).collect(),
+                ))
+            }
+            "map-values" => {
+                arity("map-values", &args, 1)?;
+                let map = map_arg(&args[0], "map-values")?;
+                Ok(SchemeVal::List(map.values().cloned().collect()))
+            }
+            "map->alist" => {
+                arity("map->alist", &args, 1)?;
+                let map = map_arg(&args[0], "map->alist")?;
+                Ok(SchemeVal::List(
+                    map.into_iter()
+                        .map(|(key, value)| SchemeVal::List(vec![SchemeVal::Str(key), value]))
+                        .collect(),
+                ))
+            }
+            "alist->map" => {
+                arity("alist->map", &args, 1)?;
+                let entries = list_arg(&args[0], "alist->map")?;
+                let mut map = BTreeMap::new();
+                for entry in entries {
+                    let SchemeVal::List(pair) = entry else {
+                        return Err(SchemeErr::Runtime(
+                            "alist->map: entries must be key/value lists".into(),
+                        ));
+                    };
+                    if pair.len() != 2 {
+                        return Err(SchemeErr::Runtime(
+                            "alist->map: entries must have exactly two elements".into(),
+                        ));
+                    }
+                    let key = str_arg(&pair[0], "alist->map")?;
+                    map.insert(key, pair[1].clone());
+                }
+                Ok(SchemeVal::Map(map))
+            }
             "string?" => {
                 arity("string?", &args, 1)?;
                 Ok(SchemeVal::Bool(matches!(&args[0], SchemeVal::Str(_))))
@@ -1648,6 +1753,11 @@ fn scheme_equal(a: &SchemeVal, b: &SchemeVal) -> bool {
         (SchemeVal::List(x), SchemeVal::List(y)) => {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| scheme_equal(a, b))
         }
+        (SchemeVal::Map(x), SchemeVal::Map(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(key, value)| y.get(key).is_some_and(|other| scheme_equal(value, other)))
+        }
         _ => false,
     }
 }
@@ -1714,6 +1824,13 @@ fn list_arg(v: &SchemeVal, name: &str) -> Result<Vec<SchemeVal>, SchemeErr> {
         SchemeVal::List(items) => Ok(items.clone()),
         SchemeVal::Nil => Ok(vec![]),
         _ => Err(SchemeErr::Runtime(format!("{name}: not a list"))),
+    }
+}
+
+fn map_arg(v: &SchemeVal, name: &str) -> Result<BTreeMap<String, SchemeVal>, SchemeErr> {
+    match v {
+        SchemeVal::Map(map) => Ok(map.clone()),
+        _ => Err(SchemeErr::Runtime(format!("{name}: not a map"))),
     }
 }
 
@@ -2226,6 +2343,55 @@ mod tests {
         assert!(matches!(
             run("(fold + 0 (list 1 2 3 4))"),
             SchemeVal::Int(10)
+        ));
+    }
+
+    // ── Map operations ────────────────────────────────────────────────────
+
+    #[test]
+    fn map_builtins() {
+        assert!(matches!(run("(map? (make-map))"), SchemeVal::Bool(true)));
+        assert!(matches!(
+            run(r#"(map-ref (make-map "a" 1 "b" 2) "a")"#),
+            SchemeVal::Int(1)
+        ));
+        assert!(matches!(
+            run(r#"(map-ref (make-map) "missing" "fallback")"#),
+            SchemeVal::Str(s) if s == "fallback"
+        ));
+        assert!(matches!(
+            run(r#"(map-has-key? (make-map "a" 1) "a")"#),
+            SchemeVal::Bool(true)
+        ));
+        assert!(matches!(
+            run(r#"(map-ref (map-set (make-map "a" 1) "a" 9) "a")"#),
+            SchemeVal::Int(9)
+        ));
+        assert!(matches!(
+            run(r#"(map-has-key? (map-delete (make-map "a" 1) "a") "a")"#),
+            SchemeVal::Bool(false)
+        ));
+        assert!(matches!(
+            run(r#"(map-ref (alist->map (map->alist (make-map "a" 1))) "a")"#),
+            SchemeVal::Int(1)
+        ));
+        assert!(matches!(
+            run(r#"(map-ref (make-map "a" 1 "a" 2) "a")"#),
+            SchemeVal::Int(2)
+        ));
+    }
+
+    #[test]
+    fn map_keys_and_values_are_deterministic() {
+        assert!(matches!(
+            run(r#"(map-keys (make-map "b" 2 "a" 1))"#),
+            SchemeVal::List(xs)
+                if matches!(&xs[..], [SchemeVal::Str(a), SchemeVal::Str(b)] if a == "a" && b == "b")
+        ));
+        assert!(matches!(
+            run(r#"(map-values (make-map "b" 2 "a" 1))"#),
+            SchemeVal::List(xs)
+                if matches!(&xs[..], [SchemeVal::Int(1), SchemeVal::Int(2)])
         ));
     }
 

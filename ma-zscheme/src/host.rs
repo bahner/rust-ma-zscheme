@@ -58,8 +58,9 @@ pub trait SchemeCtx {
     /// `did:ma:…#frag:verb arg`.
     fn eval_actor<'a>(&'a self, cmd: &'a str) -> LocalBoxFuture<'a, Result<SchemeVal, SchemeErr>>;
 
-    /// Dispatch an actor call with already-evaluated `SchemeVal` arguments,
-    /// preserving list and map structure in the CBOR encoding.
+    /// Dispatch an actor call with already-evaluated `SchemeVal` arguments.
+    /// Hosts MUST preserve list and string-keyed map structure when encoding
+    /// these values to CBOR.
     ///
     /// `actor` is `@alias#frag:verb` or a DID string — no inline args.
     fn eval_actor_with_vals<'a>(

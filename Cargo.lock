@@ -224,10 +224,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ma-zscheme"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d724bb4c02eb3b2680f31812af1d57428aa64303528cc867d0c7f10976d7e7a"
+dependencies = [
+ "futures",
+]
+
+[[package]]
 name = "ma-zscheme-ipfs"
 version = "0.2.0"
 dependencies = [
- "ma-zscheme",
+ "ma-zscheme 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -236,7 +245,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "directories",
- "ma-zscheme",
+ "ma-zscheme 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_yaml",
  "tempfile",

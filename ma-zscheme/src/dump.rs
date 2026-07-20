@@ -41,6 +41,7 @@ fn val_to_define(name: &str, val: &SchemeVal) -> Option<String> {
             let elems: Vec<String> = items.iter().map(val_to_src).collect();
             Some(format!("(define {name} '({}))", elems.join(" ")))
         }
+        SchemeVal::Map(_) => Some(format!("(define {name} {})", val_to_src(val))),
         SchemeVal::Lambda {
             params, rest, body, ..
         } => {
@@ -72,6 +73,14 @@ fn val_to_src(val: &SchemeVal) -> String {
             "({})",
             items.iter().map(val_to_src).collect::<Vec<_>>().join(" ")
         ),
+        SchemeVal::Map(map) => {
+            let elems = map
+                .iter()
+                .map(|(key, value)| format!("{key:?} {}", val_to_src(value)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("(make-map {elems})")
+        }
         other => other.display(),
     }
 }
@@ -85,5 +94,25 @@ fn expr_to_src(expr: &SchemeExpr) -> String {
             "({})",
             fs.iter().map(expr_to_src).collect::<Vec<_>>().join(" ")
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn dump_map_as_make_map_source() {
+        let env = Env::new_root();
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            "north".to_string(),
+            SchemeVal::Str("did:ma:room#exit".to_string()),
+        );
+        env.define("exits", SchemeVal::Map(inner));
+
+        let source = dump_env_source(&env);
+        assert!(source.contains(r#"(define exits (make-map "north" "did:ma:room#exit"))"#));
     }
 }

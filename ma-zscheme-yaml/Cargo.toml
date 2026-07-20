@@ -10,7 +10,7 @@ keywords = ["scheme", "config", "yaml", "actor"]
 
 [dependencies]
 anyhow = "1"
-ma-zscheme = { path = "../ma-zscheme", version = "0.2" }
+ma-zscheme = "0.2"
 directories = "5"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
