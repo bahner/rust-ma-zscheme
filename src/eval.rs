@@ -619,7 +619,7 @@ fn eval_atom(s: &str, env: &Env) -> Result<SchemeVal, SchemeErr> {
     if s == "nil" || s == "()" {
         return Ok(SchemeVal::Nil);
     }
-    // ma fragment atoms like `#room`, `#house:enter` — treat as strings.
+    // ma fragment atoms like `#room`, `#room:look` — treat as strings.
     // (`#/…` path atoms are intercepted earlier in `eval_inner` and never
     // reach this fallback.)
     if s.starts_with('#') {

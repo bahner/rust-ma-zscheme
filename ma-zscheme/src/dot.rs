@@ -314,8 +314,8 @@ mod tests {
     #[test]
     fn actor_alias_frag_verb_args() {
         let reg = reg_with("sky", "did:ma:abc");
-        let (target, verb, args) = parse_actor_command("@sky#house:enter ticket", &reg).unwrap();
-        assert_eq!(target, "did:ma:abc#house");
+        let (target, verb, args) = parse_actor_command("@sky#room:enter ticket", &reg).unwrap();
+        assert_eq!(target, "did:ma:abc#room");
         assert_eq!(verb, "enter");
         assert_eq!(args, vec!["ticket"]);
     }

@@ -89,7 +89,7 @@ pub enum SchemeVal {
     /// inside zscheme expressions): `/my/aliases/sky`, `/my/doc/poem!publish`,
     /// etc. Internally stored without the `#`.
     MaPath(String),
-    /// A ma actor target: `@ma#house:enter`, `did:ma:abc#room:enter`, etc.
+    /// A ma actor target: `@ma#room:look`, `did:ma:abc#room:enter`, etc.
     MaActor(String),
     Builtin(String),
     Lambda {

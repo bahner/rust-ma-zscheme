@@ -27,7 +27,7 @@ back as strings.
 (fib 10)                              ; → 55
 
 ; Inline substitution — result becomes part of the host command
-(.my.aliases.sky)#room:enter ((.my.aliases.ms)#house:enter #room)
+(.my.aliases.sky)#room:look ((string-append "north" " gate"))
 ```
 
 ---
@@ -44,7 +44,7 @@ back as strings.
 | List | `(1 2 3)` | Proper list |
 | Lambda | `(lambda (x) x)` | Closure |
 
-Fragment atoms such as `#room` and `#house:enter` are treated as strings.
+Fragment atoms such as `#room` and `#room:look` are treated as strings.
 
 ---
 
@@ -121,8 +121,8 @@ The `@` / `did:` syntax auto-unwraps replies: success returns the value,
 failure raises a `SchemeErr`. Use `rpc-send` for explicit tuple handling.
 
 ```scheme
-(@sky#house:enter #room)              ; → "ticket-xyz"
-(rpc-send "@sky#house" ":enter" "#room")  ; → (:ok "ticket-xyz")
+(@sky#room:look)                      ; → "You are in a quiet room."
+(rpc-send "@sky#room" ":look")       ; → (:ok "You are in a quiet room.")
 (ok? (rpc-send "@sky#ping" ":ping"))      ; → #t
 ```
 
@@ -295,6 +295,6 @@ ma-zscheme = "0.1"
 
 ---
 
-## License
+## Licence
 
 MIT
