@@ -691,8 +691,11 @@ fn is_builtin(name: &str) -> bool {
             | "substring"
             | "string-contains"
             | "string-index"
+            | "char-upcase"
+            | "char-downcase"
             | "string-upcase"
             | "string-downcase"
+            | "shell-quote"
             | "number->string"
             | "string->number"
             | "abs"
@@ -1392,6 +1395,10 @@ fn apply_builtin(
                     _ => Err(SchemeErr::Runtime("string-length: not a string".into())),
                 }
             }
+            "shell-quote" => {
+                arity("shell-quote", &args, 1)?;
+                Ok(SchemeVal::Str(shell_quote(&args[0].to_splice_lossy())))
+            }
             "substring" => {
                 arity("substring", &args, 3)?;
                 let s = match &args[0] {
@@ -1422,6 +1429,16 @@ fn apply_builtin(
                     }
                     _ => Err(SchemeErr::Runtime("string-index: not strings".into())),
                 }
+            }
+            "char-upcase" => {
+                arity("char-upcase", &args, 1)?;
+                let ch = char_arg(&args[0], "char-upcase")?;
+                Ok(SchemeVal::Str(ch.to_uppercase().collect::<String>()))
+            }
+            "char-downcase" => {
+                arity("char-downcase", &args, 1)?;
+                let ch = char_arg(&args[0], "char-downcase")?;
+                Ok(SchemeVal::Str(ch.to_lowercase().collect::<String>()))
             }
             "cadr" => {
                 arity("cadr", &args, 1)?;
@@ -1945,6 +1962,38 @@ fn str_arg(v: &SchemeVal, name: &str) -> Result<String, SchemeErr> {
             other.display()
         ))),
     }
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    let mut quoted = String::from("'");
+    for ch in value.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\\''");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
+}
+
+fn char_arg(v: &SchemeVal, name: &str) -> Result<char, SchemeErr> {
+    let text = str_arg(v, name)?;
+    let mut chars = text.chars();
+    let Some(ch) = chars.next() else {
+        return Err(SchemeErr::Runtime(format!(
+            "{name}: expected one character"
+        )));
+    };
+    if chars.next().is_some() {
+        return Err(SchemeErr::Runtime(format!(
+            "{name}: expected one character"
+        )));
+    }
+    Ok(ch)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -2478,6 +2527,30 @@ mod tests {
     }
 
     #[test]
+    fn shell_quote_wraps_as_single_command_argument() {
+        assert!(matches!(
+            run("(shell-quote \"(begin (set-prop! \\\"name\\\" \\\"The Lamp\\\"))\")"),
+            SchemeVal::Str(s) if s == "'(begin (set-prop! \"name\" \"The Lamp\"))'"
+        ));
+    }
+
+    #[test]
+    fn shell_quote_escapes_single_quotes() {
+        assert!(matches!(
+            run("(shell-quote \"Lars' lamp\")"),
+            SchemeVal::Str(s) if s == "'Lars'\\'' lamp'"
+        ));
+    }
+
+    #[test]
+    fn shell_quote_empty_string() {
+        assert!(matches!(
+            run("(shell-quote \"\")"),
+            SchemeVal::Str(s) if s == "''"
+        ));
+    }
+
+    #[test]
     fn string_contains() {
         assert!(matches!(
             run("(string-contains \"foobar\" \"oba\")"),
@@ -2498,6 +2571,14 @@ mod tests {
         assert!(matches!(
             run("(string-downcase \"WORLD\")"),
             SchemeVal::Str(s) if s == "world"
+        ));
+        assert!(matches!(
+            run(r#"(char-upcase "æ")"#),
+            SchemeVal::Str(s) if s == "Æ"
+        ));
+        assert!(matches!(
+            run(r#"(char-downcase "Æ")"#),
+            SchemeVal::Str(s) if s == "æ"
         ));
     }
 

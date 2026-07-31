@@ -82,13 +82,19 @@ Comparison: `=` `<` `>` `<=` `>=` `equal?`
 Lists: `list` `cons` `car` `cdr` `null?` `pair?`
 
 Strings: `string-append` `string-length` `substring` `string-index`
-`string-upcase` `string-downcase` `number->string` `string->number`
+`string-upcase` `string-downcase` `shell-quote` `number->string`
+`string->number`
 
 Type predicates: `string?` `number?` `boolean?` `procedure?`
 
 I/O and control: `display` `write` `error` `assert`
 
 Script loading: `(include path)` — evaluate all forms in `path.content`
+
+Command splicing: `(shell-quote value)` returns `value` quoted as one
+shell-style command argument. Use it when a value should be substituted into a
+surrounding command without being split or recursively expanded, for example
+`make thing (shell-quote (.my.things.lamp))`.
 
 ---
 
