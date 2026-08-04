@@ -510,6 +510,34 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                     return eval_pipe(forms, env, ctx).await;
                 }
 
+                // ── Dynamic actor RPC: @(<expression>):verb ────────────────
+                // The expression must resolve to a full DID or DID-URL. This
+                // keeps the convenient actor-call syntax available when a
+                // target comes from local configuration rather than a literal.
+                if let [SchemeExpr::Atom(marker), target, SchemeExpr::Atom(method), args @ ..] =
+                    forms.as_slice()
+                {
+                    if marker == "@" && method.starts_with(':') && method.len() > 1 {
+                        let target = eval(target.clone(), env.clone(), ctx.clone()).await?;
+                        let SchemeVal::Str(target) = target else {
+                            return Err(SchemeErr::Runtime(
+                                "dynamic actor target must evaluate to a DID string".to_string(),
+                            ));
+                        };
+                        if !target.starts_with("did:") {
+                            return Err(SchemeErr::Runtime(
+                                "dynamic actor target must start with did:".to_string(),
+                            ));
+                        }
+                        let actor = format!("{target}{method}");
+                        let mut values = Vec::with_capacity(args.len());
+                        for arg in args {
+                            values.push(eval(arg.clone(), env.clone(), ctx.clone()).await?);
+                        }
+                        return ctx.eval_actor_with_vals(&actor, &values).await;
+                    }
+                }
+
                 // ── ma local config path in head position (.my, .ctx) ──
                 if let SchemeExpr::Atom(head) = &forms[0] {
                     if head.starts_with('.') {
@@ -2014,6 +2042,7 @@ mod tests {
     #[derive(Default)]
     struct TestCtx {
         dot_commands: RefCell<Vec<String>>,
+        actor_calls: RefCell<Vec<(String, Vec<SchemeVal>)>>,
     }
 
     impl SchemeCtx for TestCtx {
@@ -2042,10 +2071,13 @@ mod tests {
         }
         fn eval_actor_with_vals<'a>(
             &'a self,
-            _actor: &'a str,
-            _args: &'a [SchemeVal],
+            actor: &'a str,
+            args: &'a [SchemeVal],
         ) -> LocalBoxFuture<'a, Result<SchemeVal, SchemeErr>> {
-            Box::pin(async { Err(SchemeErr::Runtime("no actors in tests".into())) })
+            self.actor_calls
+                .borrow_mut()
+                .push((actor.to_string(), args.to_vec()));
+            Box::pin(async { Ok(SchemeVal::Str("actor reply".to_string())) })
         }
         fn send_rpc<'a>(
             &'a self,
@@ -2078,6 +2110,24 @@ mod tests {
     fn run_res(src: &str) -> Result<SchemeVal, SchemeErr> {
         let env = Env::new_root();
         futures::executor::block_on(eval_source_in_env(src, env, ctx()))
+    }
+
+    #[test]
+    fn dynamic_actor_suffix_calls_method_on_did_from_expression() {
+        let host = Rc::new(TestCtx::default());
+        let ctx: Ctx = host.clone();
+        let result = futures::executor::block_on(eval_source_in_env(
+            "(define room \"did:ma:runtime#construct\") (@(begin room):owner?)",
+            Env::new_root(),
+            ctx,
+        ))
+        .unwrap();
+
+        assert!(matches!(result, SchemeVal::Str(ref value) if value == "actor reply"));
+        let calls = host.actor_calls.borrow();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "did:ma:runtime#construct:owner?");
+        assert!(calls[0].1.is_empty());
     }
 
     fn run_with_ctx(src: &str, ctx: Ctx) -> Result<SchemeVal, SchemeErr> {

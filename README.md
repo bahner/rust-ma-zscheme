@@ -122,12 +122,14 @@ The evaluator recognises forms based on the head of a list expression.
 |------|---------|
 | `(@alias#frag:verb arg…)` | expand alias → DID, send RPC, await reply |
 | `(did:ma:abc#frag:verb arg…)` | send RPC directly to full DID-URL |
+| `(@(<expression>):verb arg…)` | evaluate a DID/DID-URL expression, then send RPC |
 
 The `@` / `did:` syntax auto-unwraps replies: success returns the value,
 failure raises a `SchemeErr`. Use `rpc-send` for explicit tuple handling.
 
 ```scheme
 (@sky#room:look)                      ; → "You are in a quiet room."
+(@(.my.ctx.room):owner?)              ; → calls :owner? on the saved room
 (rpc-send "@sky#room" ":look")       ; → (:ok "You are in a quiet room.")
 (ok? (rpc-send "@sky#ping" ":ping"))      ; → #t
 ```
