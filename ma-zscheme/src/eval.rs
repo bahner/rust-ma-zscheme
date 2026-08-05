@@ -114,17 +114,9 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
             SchemeExpr::Nil => return Ok(SchemeVal::Nil),
             SchemeExpr::Str(s) => return Ok(SchemeVal::Str(s)),
             SchemeExpr::Atom(s) => {
-                // ma local config path atom in value position: .my.…, .ctx.…
-                if s.starts_with('.') {
-                    return ctx.eval_dot(&s);
-                }
-                // Remote path atom in value position: #/ipfs/…, #/ipns/…, #/ipld/….
-                if let Some(rest) = s.strip_prefix("#/") {
-                    let path = format!("/{rest}");
-                    if path.starts_with("/ipfs/") {
-                        return Err(explicit_include_error(&path));
-                    }
-                    return eval_atom(&s, &env);
+                // #.my.… / #.ctx.… — local config path in value position
+                if s.starts_with("#.") {
+                    return ctx.eval_dot(&s[1..]);
                 }
                 return eval_atom(&s, &env);
             }
@@ -536,10 +528,10 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                     }
                 }
 
-                // ── ma local config path in head position (.my, .ctx) ──
+                // ── ma local config path in head position (#.my, #.ctx) ──
                 if let SchemeExpr::Atom(head) = &forms[0] {
-                    if head.starts_with('.') {
-                        let path = head.clone();
+                    if head.starts_with("#.") {
+                        let path = head[1..].to_string();
                         if forms.len() == 1 {
                             let val = ctx.eval_dot(&path)?;
                             if let SchemeVal::Str(ref s) = val {
@@ -560,13 +552,6 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                             args.push(eval(form.clone(), env.clone(), ctx.clone()).await?);
                         }
                         return apply(mapath, args, ctx).await;
-                    }
-                    // ── remote path in head position (#/ipfs, #/ipns, #/ipld) ──
-                    if let Some(rest) = head.strip_prefix("#/") {
-                        let path = format!("/{rest}");
-                        if is_link_value(&path) {
-                            return Err(explicit_include_error(&path));
-                        }
                     }
                 }
 
@@ -823,9 +808,9 @@ fn eval_lambda(forms: &[SchemeExpr], env: Env) -> Result<SchemeVal, SchemeErr> {
     })
 }
 
-/// Explicitly fetch and evaluate Scheme source in the current environment.
-/// Remote paths are accepted only here so a bare `#/ipfs/<cid>` cannot trigger
-/// hidden I/O or code execution.
+/// Evaluate Scheme source loaded from a local config path or inline text.
+/// `(include #/ipfs/<cid>)` is the only sanctioned form for content-addressed
+/// library loading; all other remote fetch must be done explicitly.
 async fn eval_include(forms: &[SchemeExpr], env: Env, ctx: Ctx) -> Result<SchemeVal, SchemeErr> {
     if forms.len() != 2 {
         return Err(SchemeErr::Arity {
@@ -845,13 +830,20 @@ async fn eval_include(forms: &[SchemeExpr], env: Env, ctx: Ctx) -> Result<Scheme
                 SchemeVal::Str(path) => path,
                 other => {
                     return Err(SchemeErr::Runtime(format!(
-                        "include: expected #/ipfs/<cid> or source text, got {}",
+                        "include: expected a config path or source text, got {}",
                         other.display()
                     )))
                 }
             };
-            if is_link_value(&path) {
-                ctx.fetch_path(&path).await.map_err(SchemeErr::MaError)?
+            if path.starts_with("#.") {
+                match ctx.eval_dot(&path[1..])? {
+                    SchemeVal::Str(source) => source,
+                    _ => {
+                        return Err(SchemeErr::Runtime(format!(
+                            "include: {path} is not a string value"
+                        )))
+                    }
+                }
             } else if path.starts_with('.') {
                 match ctx.eval_dot(&path)? {
                     SchemeVal::Str(source) => source,
@@ -867,12 +859,6 @@ async fn eval_include(forms: &[SchemeExpr], env: Env, ctx: Ctx) -> Result<Scheme
         }
     };
     eval_source_in_env(&content, env, ctx).await
-}
-
-fn explicit_include_error(path: &str) -> SchemeErr {
-    SchemeErr::Runtime(format!(
-        "{path} must be loaded explicitly; did you mean (include #{path})?"
-    ))
 }
 
 // ── Guard form ────────────────────────────────────────────────────────────
@@ -2185,14 +2171,14 @@ mod tests {
     #[test]
     fn dot_path_head_routes_dot_command_to_host() {
         let test_ctx = Rc::new(TestCtx::default());
-        run_with_ctx("(.my.i18n)", test_ctx.clone()).unwrap();
+        run_with_ctx("(#.my.i18n)", test_ctx.clone()).unwrap();
         assert_eq!(test_ctx.dot_commands.borrow().as_slice(), [".my.i18n"]);
     }
 
     #[test]
     fn dot_path_set_routes_dot_command_to_host() {
         let test_ctx = Rc::new(TestCtx::default());
-        run_with_ctx("(.my.i18n: \"nb\")", test_ctx.clone()).unwrap();
+        run_with_ctx("(#.my.i18n: \"nb\")", test_ctx.clone()).unwrap();
         assert_eq!(test_ctx.dot_commands.borrow().as_slice(), [".my.i18n: nb"]);
     }
 
@@ -2204,16 +2190,10 @@ mod tests {
     }
 
     #[test]
-    fn bare_ipfs_path_is_rejected_without_fetching() {
+    fn bare_ipfs_path_atom_evaluates_to_string() {
         let test_ctx = Rc::new(TestCtx::default());
-        let error = run_with_ctx("#/ipfs/bafytest", test_ctx.clone())
-            .expect_err("bare IPFS paths require include")
-            .to_string();
-
-        assert_eq!(
-            error,
-            "/ipfs/bafytest must be loaded explicitly; did you mean (include #/ipfs/bafytest)?"
-        );
+        let val = run_with_ctx("#/ipfs/bafytest", test_ctx.clone()).unwrap();
+        assert!(matches!(val, SchemeVal::Str(ref s) if s == "#/ipfs/bafytest"));
         assert!(test_ctx.fetch_paths.borrow().is_empty());
     }
 
