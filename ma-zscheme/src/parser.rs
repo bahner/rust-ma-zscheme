@@ -29,14 +29,60 @@ impl std::fmt::Display for LexError {
 
 // ── Lexer ──────────────────────────────────────────────────────────────────
 
+/// Strip `;` line comments from Scheme source, preserving newlines and string contents.
+pub fn strip_comments(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut in_comment = false;
+    for ch in input.chars() {
+        if in_comment {
+            if ch == '\n' {
+                in_comment = false;
+                out.push(ch);
+            }
+            continue;
+        }
+        if escaped {
+            escaped = false;
+            out.push(ch);
+            continue;
+        }
+        if ch == '\\' && in_string {
+            escaped = true;
+            out.push(ch);
+            continue;
+        }
+        if in_string {
+            if ch == '"' {
+                in_string = false;
+            }
+            out.push(ch);
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            continue;
+        }
+        if ch == ';' {
+            in_comment = true;
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// Tokenise a Scheme source string.
 ///
 /// # Errors
 ///
 /// Returns `Err` if the input contains an unterminated string literal.
 pub fn tokenize(input: &str) -> Result<Vec<String>, LexError> {
+    let stripped = strip_comments(input);
     let mut tokens = Vec::new();
-    let mut chars = input.chars().peekable();
+    let mut chars = stripped.chars().peekable();
 
     while let Some(&ch) = chars.peek() {
         match ch {
@@ -191,9 +237,33 @@ mod tests {
     }
 
     #[test]
-    fn tokenize_keeps_semicolon_in_atoms() {
-        let tokens = tokenize("(list ;note)").unwrap();
-        assert_eq!(tokens, vec!["(", "list", ";note", ")"]);
+    fn tokenize_semicolon_starts_line_comment() {
+        let tokens = tokenize("; this is a comment\n(+ 1 2)").unwrap();
+        assert_eq!(tokens, vec!["(", "+", "1", "2", ")"]);
+    }
+
+    #[test]
+    fn tokenize_inline_semicolon_comment_ignored() {
+        let tokens = tokenize("(define x 1) ; set x").unwrap();
+        assert_eq!(tokens, vec!["(", "define", "x", "1", ")"]);
+    }
+
+    #[test]
+    fn tokenize_double_semicolon_comment() {
+        let tokens = tokenize("(define y 2) ;; section").unwrap();
+        assert_eq!(tokens, vec!["(", "define", "y", "2", ")"]);
+    }
+
+    #[test]
+    fn tokenize_hash_atom_preserved() {
+        let tokens = tokenize("(if #f #t #f)").unwrap();
+        assert_eq!(tokens, vec!["(", "if", "#f", "#t", "#f", ")"]);
+    }
+
+    #[test]
+    fn tokenize_semicolon_in_string_not_a_comment() {
+        let tokens = tokenize("(display \"hello ; world\")").unwrap();
+        assert_eq!(tokens, vec!["(", "display", "\"hello ; world\"", ")"]);
     }
 
     #[test]

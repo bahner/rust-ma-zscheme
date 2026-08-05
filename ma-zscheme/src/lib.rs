@@ -51,6 +51,14 @@ pub fn init_session_env() {
     SESSION_ENV.with(|e| *e.borrow_mut() = Some(Env::new_root()));
 }
 
+/// Install a fully initialised session environment.
+///
+/// Hosts can evaluate bootstrap source in a candidate environment and call
+/// this only after every bootstrap layer has succeeded.
+pub fn install_session_env(env: Env) {
+    SESSION_ENV.with(|e| *e.borrow_mut() = Some(env));
+}
+
 /// Clear the session environment (call on logout / script end).
 pub fn reset_session_env() {
     SESSION_ENV.with(|e| *e.borrow_mut() = None);

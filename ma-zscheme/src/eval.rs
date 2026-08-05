@@ -121,13 +121,10 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                 // Remote path atom in value position: #/ipfs/…, #/ipns/…, #/ipld/….
                 if let Some(rest) = s.strip_prefix("#/") {
                     let path = format!("/{rest}");
-                    if is_link_value(&path) {
-                        return ctx
-                            .fetch_path(&path)
-                            .await
-                            .map(SchemeVal::Str)
-                            .map_err(SchemeErr::MaError);
+                    if path.starts_with("/ipfs/") {
+                        return Err(explicit_include_error(&path));
                     }
+                    return eval_atom(&s, &env);
                 }
                 return eval_atom(&s, &env);
             }
@@ -496,6 +493,7 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                         }
 
                         "guard" => return eval_guard(forms, env, ctx).await,
+                        "include" => return eval_include(&forms, env, ctx).await,
 
                         _ => {}
                     }
@@ -567,16 +565,7 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                     if let Some(rest) = head.strip_prefix("#/") {
                         let path = format!("/{rest}");
                         if is_link_value(&path) {
-                            if forms.len() == 1 {
-                                return ctx
-                                    .fetch_path(&path)
-                                    .await
-                                    .map(SchemeVal::Str)
-                                    .map_err(SchemeErr::MaError);
-                            }
-                            return Err(SchemeErr::Runtime(format!(
-                                "{path} is read-only and does not accept arguments"
-                            )));
+                            return Err(explicit_include_error(&path));
                         }
                     }
                 }
@@ -756,7 +745,6 @@ fn is_builtin(name: &str) -> bool {
             | "ok-val"
             | "err-msg"
             | "use"
-            | "include"
             | "cadr"
             | "caddr"
             | "cadddr"
@@ -833,6 +821,58 @@ fn eval_lambda(forms: &[SchemeExpr], env: Env) -> Result<SchemeVal, SchemeErr> {
         body: forms[2..].to_vec(),
         env,
     })
+}
+
+/// Explicitly fetch and evaluate Scheme source in the current environment.
+/// Remote paths are accepted only here so a bare `#/ipfs/<cid>` cannot trigger
+/// hidden I/O or code execution.
+async fn eval_include(forms: &[SchemeExpr], env: Env, ctx: Ctx) -> Result<SchemeVal, SchemeErr> {
+    if forms.len() != 2 {
+        return Err(SchemeErr::Arity {
+            name: "include".to_string(),
+            expected: 1,
+            got: forms.len() - 1,
+        });
+    }
+
+    let content = match &forms[1] {
+        SchemeExpr::Atom(path_atom) if path_atom.starts_with("#/ipfs/") => {
+            let path = path_atom.replacen("#", "", 1);
+            ctx.fetch_path(&path).await.map_err(SchemeErr::MaError)?
+        }
+        operand => {
+            let path = match eval(operand.clone(), env.clone(), ctx.clone()).await? {
+                SchemeVal::Str(path) => path,
+                other => {
+                    return Err(SchemeErr::Runtime(format!(
+                        "include: expected #/ipfs/<cid> or source text, got {}",
+                        other.display()
+                    )))
+                }
+            };
+            if is_link_value(&path) {
+                ctx.fetch_path(&path).await.map_err(SchemeErr::MaError)?
+            } else if path.starts_with('.') {
+                match ctx.eval_dot(&path)? {
+                    SchemeVal::Str(source) => source,
+                    _ => {
+                        return Err(SchemeErr::Runtime(format!(
+                            "include: {path} is not a string value"
+                        )))
+                    }
+                }
+            } else {
+                path
+            }
+        }
+    };
+    eval_source_in_env(&content, env, ctx).await
+}
+
+fn explicit_include_error(path: &str) -> SchemeErr {
+    SchemeErr::Runtime(format!(
+        "{path} must be loaded explicitly; did you mean (include #{path})?"
+    ))
 }
 
 // ── Guard form ────────────────────────────────────────────────────────────
@@ -1731,34 +1771,6 @@ fn apply_builtin(
                 // Focus mode: no-op in the evaluator; host handles UI state.
                 Ok(SchemeVal::Nil)
             }
-            "include" => {
-                arity("include", &args, 1)?;
-                let path = match &args[0] {
-                    SchemeVal::Str(s) => s.clone(),
-                    other => {
-                        return Err(SchemeErr::Runtime(format!(
-                            "include: expected a path string or CID, got {}",
-                            other.display()
-                        )))
-                    }
-                };
-                let content = if is_link_value(&path) {
-                    ctx.fetch_path(&path).await.map_err(SchemeErr::MaError)?
-                } else if path.starts_with('.') {
-                    match ctx.eval_dot(&path)? {
-                        SchemeVal::Str(s) => s,
-                        _ => {
-                            return Err(SchemeErr::MaError(format!(
-                                "include: {path} is not a string value"
-                            )))
-                        }
-                    }
-                } else {
-                    path.clone()
-                };
-                let env = crate::get_env();
-                eval_source_in_env(&content, env, ctx).await
-            }
             other => Err(SchemeErr::Undefined(other.to_string())),
         }
     })
@@ -2043,6 +2055,8 @@ mod tests {
     struct TestCtx {
         dot_commands: RefCell<Vec<String>>,
         actor_calls: RefCell<Vec<(String, Vec<SchemeVal>)>>,
+        fetch_paths: RefCell<Vec<String>>,
+        fetch_source: RefCell<Option<String>>,
     }
 
     impl SchemeCtx for TestCtx {
@@ -2060,8 +2074,10 @@ mod tests {
             _tx: oneshot::Sender<Result<SchemeVal, String>>,
         ) {
         }
-        fn fetch_path<'a>(&'a self, _path: &'a str) -> LocalBoxFuture<'a, Result<String, String>> {
-            Box::pin(async { Err("no IPFS in tests".to_string()) })
+        fn fetch_path<'a>(&'a self, path: &'a str) -> LocalBoxFuture<'a, Result<String, String>> {
+            self.fetch_paths.borrow_mut().push(path.to_string());
+            let source = self.fetch_source.borrow().clone();
+            Box::pin(async move { source.ok_or_else(|| "no IPFS in tests".to_string()) })
         }
         fn eval_actor<'a>(
             &'a self,
@@ -2185,6 +2201,42 @@ mod tests {
         let test_ctx = Rc::new(TestCtx::default());
         assert!(run_with_ctx("(#/my/i18n)", test_ctx.clone()).is_err());
         assert!(test_ctx.dot_commands.borrow().is_empty());
+    }
+
+    #[test]
+    fn bare_ipfs_path_is_rejected_without_fetching() {
+        let test_ctx = Rc::new(TestCtx::default());
+        let error = run_with_ctx("#/ipfs/bafytest", test_ctx.clone())
+            .expect_err("bare IPFS paths require include")
+            .to_string();
+
+        assert_eq!(
+            error,
+            "/ipfs/bafytest must be loaded explicitly; did you mean (include #/ipfs/bafytest)?"
+        );
+        assert!(test_ctx.fetch_paths.borrow().is_empty());
+    }
+
+    #[test]
+    fn include_ipfs_path_loads_into_callers_environment() {
+        let test_ctx = Rc::new(TestCtx::default());
+        test_ctx
+            .fetch_source
+            .replace(Some("(define imported-value 42)".to_string()));
+        let env = Env::new_root();
+
+        futures::executor::block_on(eval_source_in_env(
+            "(include #/ipfs/bafytest)",
+            env.clone(),
+            test_ctx.clone(),
+        ))
+        .expect("explicit include succeeds");
+
+        assert!(matches!(
+            env.get("imported-value"),
+            Some(SchemeVal::Int(42))
+        ));
+        assert_eq!(test_ctx.fetch_paths.borrow().as_slice(), ["/ipfs/bafytest"]);
     }
 
     // ── Atoms & literals ──────────────────────────────────────────────────
