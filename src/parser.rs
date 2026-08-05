@@ -84,7 +84,6 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, LexError> {
                 }
                 tokens.push(format!("\"{s}\""));
             }
-            ';' => while chars.next().is_some_and(|c| c != '\n') {},
             '|' => {
                 chars.next();
                 tokens.push("|".to_string());
@@ -102,7 +101,6 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, LexError> {
                         || c == '\r'
                         || c == '('
                         || c == ')'
-                        || c == ';'
                         || c == '|'
                     {
                         break;
@@ -193,9 +191,9 @@ mod tests {
     }
 
     #[test]
-    fn tokenize_strips_comments() {
-        let tokens = tokenize("; this is a comment\n(+ 1 2)").unwrap();
-        assert_eq!(tokens, vec!["(", "+", "1", "2", ")"]);
+    fn tokenize_keeps_semicolon_in_atoms() {
+        let tokens = tokenize("(list ;note)").unwrap();
+        assert_eq!(tokens, vec!["(", "list", ";note", ")"]);
     }
 
     #[test]
