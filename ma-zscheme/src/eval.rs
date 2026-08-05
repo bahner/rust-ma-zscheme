@@ -837,7 +837,7 @@ async fn eval_include(forms: &[SchemeExpr], env: Env, ctx: Ctx) -> Result<Scheme
 
     let content = match &forms[1] {
         SchemeExpr::Atom(path_atom) if path_atom.starts_with("#/ipfs/") => {
-            let path = path_atom.replacen("#", "", 1);
+            let path = path_atom.replacen('#', "", 1);
             ctx.fetch_path(&path).await.map_err(SchemeErr::MaError)?
         }
         operand => {

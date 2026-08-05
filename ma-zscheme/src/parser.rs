@@ -30,6 +30,7 @@ impl std::fmt::Display for LexError {
 // ── Lexer ──────────────────────────────────────────────────────────────────
 
 /// Strip `;` line comments from Scheme source, preserving newlines and string contents.
+#[must_use]
 pub fn strip_comments(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut in_string = false;
