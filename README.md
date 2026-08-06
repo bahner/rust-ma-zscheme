@@ -27,7 +27,7 @@ back as strings.
 (fib 10)                              ; → 55
 
 ; Inline substitution — result becomes part of the host command
-(.my.aliases.sky)#room:look ((string-append "north" " gate"))
+@(#.my.aliases.sky)#room:look ((string-append "north" " gate"))
 ```
 
 ---
@@ -94,7 +94,21 @@ Script loading: `(include path)` — evaluate all forms in `path.content`
 Command splicing: `(shell-quote value)` returns `value` quoted as one
 shell-style command argument. Use it when a value should be substituted into a
 surrounding command without being split or recursively expanded, for example
-`make thing (shell-quote (.my.things.lamp))`.
+`make thing (shell-quote (#.my.things.lamp))`.
+
+Content access is explicit; a bare path is always data and is never fetched by
+the evaluator:
+
+| Form | Result |
+|------|--------|
+| `(ipfs-get #/ipfs/<cid>)` | opaque byte value |
+| `(ipfs-cat #/ipfs/<cid>)` | UTF-8 text |
+| `(ipfs-name-resolve #/ipns/<name>)` | current `/ipfs/<cid>` path, without fetching content |
+| `(include #/ipfs/<cid>)` | fetch and evaluate Scheme source |
+
+`ipfs-get` also accepts IPNS and IPLD paths. `ipfs-cat` accepts IPFS, IPNS, and
+IPLD paths but fails if the fetched bytes are not valid UTF-8. Byte values are
+not command-spliceable or implicitly converted to strings.
 
 ---
 
@@ -106,14 +120,14 @@ The evaluator recognises forms based on the head of a list expression.
 
 | Form | Meaning |
 |------|---------|
-| `(.my.path)` | get — returns the config value |
-| `(.my.path: "v")` | set — writes config, returns `nil` |
-| `(.my.path:)` | delete subtree, returns `nil` |
+| `(#.my.path)` | get — returns the config value |
+| `(#.my.path: "v")` | set — writes config, returns `nil` |
+| `(#.my.path:)` | delete subtree, returns `nil` |
 
 ```scheme
-(.my.aliases.sky)                     ; returns stored DID
-(.my.config.colour.text)              ; returns colour string
-(.my.config.k: "value")              ; sets a config key
+(#.my.aliases.sky)                    ; returns stored DID
+(#.my.config.colour.text)             ; returns colour string
+(#.my.config.k: "value")             ; sets a config key
 ```
 
 ### Actor RPC (asynchronous)
@@ -129,7 +143,7 @@ failure raises a `SchemeErr`. Use `rpc-send` for explicit tuple handling.
 
 ```scheme
 (@sky#room:look)                      ; → "You are in a quiet room."
-(@(.my.ctx.room):owner?)              ; → calls :owner? on the saved room
+(@(#.my.ctx.room):owner?)             ; → calls :owner? on the saved room
 (rpc-send "@sky#room" ":look")       ; → (:ok "You are in a quiet room.")
 (ok? (rpc-send "@sky#ping" ":ping"))      ; → #t
 ```

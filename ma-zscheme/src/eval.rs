@@ -114,7 +114,6 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
             SchemeExpr::Nil => return Ok(SchemeVal::Nil),
             SchemeExpr::Str(s) => return Ok(SchemeVal::Str(s)),
             SchemeExpr::Atom(s) => {
-                // #.my.… / #.ctx.… — local config path in value position
                 if s.starts_with("#.") {
                     return ctx.eval_dot(&s[1..]);
                 }
@@ -528,7 +527,7 @@ async fn eval_inner(mut expr: SchemeExpr, mut env: Env, ctx: Ctx) -> Result<Sche
                     }
                 }
 
-                // ── ma local config path in head position (#.my, #.ctx) ──
+                // ── ma local config path in head position ──
                 if let SchemeExpr::Atom(head) = &forms[0] {
                     if head.starts_with("#.") {
                         let path = head[1..].to_string();
@@ -730,6 +729,9 @@ fn is_builtin(name: &str) -> bool {
             | "ok-val"
             | "err-msg"
             | "use"
+            | "ipfs-cat"
+            | "ipfs-get"
+            | "ipfs-name-resolve"
             | "cadr"
             | "caddr"
             | "cadddr"
@@ -808,9 +810,9 @@ fn eval_lambda(forms: &[SchemeExpr], env: Env) -> Result<SchemeVal, SchemeErr> {
     })
 }
 
-/// Evaluate Scheme source loaded from a local config path or inline text.
-/// `(include #/ipfs/<cid>)` is the only sanctioned form for content-addressed
-/// library loading; all other remote fetch must be done explicitly.
+/// Evaluate Scheme source loaded from a local config path, IPFS, or inline text.
+/// Use `(#/ipfs/<cid>)` for raw fetched text; `include` fetches then evaluates
+/// Scheme source.
 async fn eval_include(forms: &[SchemeExpr], env: Env, ctx: Ctx) -> Result<SchemeVal, SchemeErr> {
     if forms.len() != 2 {
         return Err(SchemeErr::Arity {
@@ -1036,17 +1038,18 @@ fn apply(
             SchemeVal::Builtin(name) => apply_builtin(name, args, ctx).await,
 
             SchemeVal::MaPath(path) => {
-                let command = if args.len() == 1 && args[0].to_splice_lossy().is_empty() {
+                let args = args
+                    .iter()
+                    .map(SchemeVal::to_splice)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(SchemeErr::Runtime)?;
+                let command = if args.len() == 1 && args[0].is_empty() {
                     let clean = path.trim_end_matches(':');
                     format!("{clean}:")
                 } else if args.is_empty() {
                     path.clone()
                 } else {
-                    let args_str = args
-                        .iter()
-                        .map(SchemeVal::to_splice_lossy)
-                        .collect::<Vec<_>>()
-                        .join(" ");
+                    let args_str = args.join(" ");
                     format!("{path} {args_str}")
                 };
                 ctx.eval_dot(&command)
@@ -1757,6 +1760,33 @@ fn apply_builtin(
                 // Focus mode: no-op in the evaluator; host handles UI state.
                 Ok(SchemeVal::Nil)
             }
+            "ipfs-cat" => {
+                arity("ipfs-cat", &args, 1)?;
+                let path = str_arg(&args[0], "ipfs-cat")?;
+                let path = content_path(&path, "ipfs-cat")?;
+                ctx.fetch_path(path)
+                    .await
+                    .map(SchemeVal::Str)
+                    .map_err(SchemeErr::MaError)
+            }
+            "ipfs-get" => {
+                arity("ipfs-get", &args, 1)?;
+                let path = str_arg(&args[0], "ipfs-get")?;
+                let path = content_path(&path, "ipfs-get")?;
+                ctx.fetch_bytes(path)
+                    .await
+                    .map(SchemeVal::Bytes)
+                    .map_err(SchemeErr::MaError)
+            }
+            "ipfs-name-resolve" => {
+                arity("ipfs-name-resolve", &args, 1)?;
+                let path = str_arg(&args[0], "ipfs-name-resolve")?;
+                let path = ipns_path(&path)?;
+                ctx.resolve_ipns(path)
+                    .await
+                    .map(SchemeVal::Str)
+                    .map_err(SchemeErr::MaError)
+            }
             other => Err(SchemeErr::Undefined(other.to_string())),
         }
     })
@@ -1788,6 +1818,29 @@ fn arity_min(name: &str, args: &[SchemeVal], min: usize) -> Result<(), SchemeErr
     }
 }
 
+fn content_path<'a>(path: &'a str, primitive: &str) -> Result<&'a str, SchemeErr> {
+    let path = path.strip_prefix('#').unwrap_or(path);
+    if matches!(path, p if p.starts_with("/ipfs/") || p.starts_with("/ipns/") || p.starts_with("/ipld/"))
+    {
+        Ok(path)
+    } else {
+        Err(SchemeErr::Runtime(format!(
+            "{primitive}: expected an IPFS, IPNS, or IPLD path"
+        )))
+    }
+}
+
+fn ipns_path(path: &str) -> Result<&str, SchemeErr> {
+    let path = path.strip_prefix('#').unwrap_or(path);
+    if path.starts_with("/ipns/") {
+        Ok(path)
+    } else {
+        Err(SchemeErr::Runtime(
+            "ipfs-name-resolve: expected an IPNS path".to_string(),
+        ))
+    }
+}
+
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 fn scheme_equal(a: &SchemeVal, b: &SchemeVal) -> bool {
     match (a, b) {
@@ -1796,6 +1849,7 @@ fn scheme_equal(a: &SchemeVal, b: &SchemeVal) -> bool {
         (SchemeVal::Int(x), SchemeVal::Float(y)) => (*x as f64) == *y,
         (SchemeVal::Float(x), SchemeVal::Int(y)) => *x == (*y as f64),
         (SchemeVal::Str(x), SchemeVal::Str(y)) => x == y,
+        (SchemeVal::Bytes(x), SchemeVal::Bytes(y)) => x == y,
         (SchemeVal::Bool(x), SchemeVal::Bool(y)) => x == y,
         (SchemeVal::Nil, SchemeVal::Nil) => true,
         (SchemeVal::List(x), SchemeVal::List(y)) => {
@@ -2043,6 +2097,7 @@ mod tests {
         actor_calls: RefCell<Vec<(String, Vec<SchemeVal>)>>,
         fetch_paths: RefCell<Vec<String>>,
         fetch_source: RefCell<Option<String>>,
+        resolved_ipns_paths: RefCell<Vec<String>>,
     }
 
     impl SchemeCtx for TestCtx {
@@ -2064,6 +2119,16 @@ mod tests {
             self.fetch_paths.borrow_mut().push(path.to_string());
             let source = self.fetch_source.borrow().clone();
             Box::pin(async move { source.ok_or_else(|| "no IPFS in tests".to_string()) })
+        }
+        fn fetch_bytes<'a>(
+            &'a self,
+            _path: &'a str,
+        ) -> LocalBoxFuture<'a, Result<Vec<u8>, String>> {
+            Box::pin(async { Ok(vec![0x89, b'P', b'N', b'G']) })
+        }
+        fn resolve_ipns<'a>(&'a self, path: &'a str) -> LocalBoxFuture<'a, Result<String, String>> {
+            self.resolved_ipns_paths.borrow_mut().push(path.to_string());
+            Box::pin(async { Ok("/ipfs/bafyresolved".to_string()) })
         }
         fn eval_actor<'a>(
             &'a self,
@@ -2194,6 +2259,53 @@ mod tests {
         let test_ctx = Rc::new(TestCtx::default());
         let val = run_with_ctx("#/ipfs/bafytest", test_ctx.clone()).unwrap();
         assert!(matches!(val, SchemeVal::Str(ref s) if s == "#/ipfs/bafytest"));
+        assert!(test_ctx.fetch_paths.borrow().is_empty());
+    }
+
+    #[test]
+    fn ipfs_cat_fetches_text_content() {
+        let test_ctx = Rc::new(TestCtx::default());
+        test_ctx
+            .fetch_source
+            .replace(Some("hello from IPFS".to_string()));
+        assert!(matches!(
+            run_with_ctx("(ipfs-cat #/ipfs/bafytest)", test_ctx),
+            Ok(SchemeVal::Str(text)) if text == "hello from IPFS"
+        ));
+    }
+
+    #[test]
+    fn ipfs_get_fetches_binary_content() {
+        let test_ctx = Rc::new(TestCtx::default());
+
+        assert!(matches!(
+            run_with_ctx("(ipfs-get #/ipfs/bafytest)", test_ctx),
+            Ok(SchemeVal::Bytes(bytes)) if bytes == vec![0x89, b'P', b'N', b'G']
+        ));
+    }
+
+    #[test]
+    fn ipfs_get_bytes_cannot_be_used_as_a_local_crud_value() {
+        let test_ctx = Rc::new(TestCtx::default());
+
+        assert!(
+            run_with_ctx("(#.my.image: (ipfs-get #/ipfs/bafytest))", test_ctx.clone()).is_err()
+        );
+        assert!(test_ctx.dot_commands.borrow().is_empty());
+    }
+
+    #[test]
+    fn ipfs_name_resolve_returns_ipfs_reference_without_fetching_content() {
+        let test_ctx = Rc::new(TestCtx::default());
+
+        assert!(matches!(
+            run_with_ctx("(ipfs-name-resolve #/ipns/k51example)", test_ctx.clone()),
+            Ok(SchemeVal::Str(path)) if path == "/ipfs/bafyresolved"
+        ));
+        assert_eq!(
+            test_ctx.resolved_ipns_paths.borrow().as_slice(),
+            ["/ipns/k51example"]
+        );
         assert!(test_ctx.fetch_paths.borrow().is_empty());
     }
 

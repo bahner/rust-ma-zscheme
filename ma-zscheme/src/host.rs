@@ -52,6 +52,17 @@ pub trait SchemeCtx {
     /// `/ipld/<cid>` path, or a bare `did:ma:` DID.
     fn fetch_path<'a>(&'a self, path: &'a str) -> LocalBoxFuture<'a, Result<String, String>>;
 
+    /// Fetch the raw bytes at a content-addressed path.
+    fn fetch_bytes<'a>(&'a self, _path: &'a str) -> LocalBoxFuture<'a, Result<Vec<u8>, String>> {
+        Box::pin(async { Err("binary content fetching is not supported by this host".to_string()) })
+    }
+
+    /// Resolve an `/ipns/<name>` reference to its current `/ipfs/<cid>` path
+    /// without fetching the referenced content.
+    fn resolve_ipns<'a>(&'a self, _path: &'a str) -> LocalBoxFuture<'a, Result<String, String>> {
+        Box::pin(async { Err("IPNS name resolution is not supported by this host".to_string()) })
+    }
+
     /// Dispatch a fully-formed ma actor command and await the reply.
     ///
     /// `cmd` is a raw command string such as `@alias#frag:verb arg` or

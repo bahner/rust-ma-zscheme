@@ -6,9 +6,10 @@
 //! - Proper tail-call optimisation (TCO) via an explicit `'tco` loop
 //! - Named `let` (`let loop …`)
 //! - `apply` as a first-class procedure
-//! - ma-specific primitives: local config paths (`#.my.path`, `#.ctx.path`),
-//!   actor calls (`@alias` / `did:ma:…`), and content-addressed library loading
-//!   via `(include #/ipfs/…)`
+//! - ma-specific primitives: hash-dot local config paths such as `#.my.path`,
+//!   actor calls (`@alias` / `did:ma:…`), explicit content access with
+//!   `ipfs-get`, `ipfs-cat`, and `ipfs-name-resolve`, and Scheme source
+//!   loading with `include`
 //! - Pipe threading (`val | (f arg) | g`)
 //!
 //! ## Usage

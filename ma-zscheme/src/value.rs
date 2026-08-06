@@ -85,13 +85,14 @@ impl Env {
 #[derive(Clone, Debug)]
 pub enum SchemeVal {
     Str(String),
+    Bytes(Vec<u8>),
     Int(i64),
     Float(f64),
     Bool(bool),
     Nil,
     List(Vec<SchemeVal>),
     Map(BTreeMap<String, SchemeVal>),
-    /// A ma local config path reference (surface syntax `.my…`, `.ctx…`
+    /// A ma local config path reference (surface syntax `#.my…`, `#.ma.ctx…`
     /// inside zscheme expressions): `.my.aliases.sky`, `.my.doc.poem!publish`,
     /// etc. Internally stored without the `#`.
     MaPath(String),
@@ -111,6 +112,7 @@ impl SchemeVal {
     pub fn display(&self) -> String {
         match self {
             SchemeVal::Str(s) => s.clone(),
+            SchemeVal::Bytes(_) => "#<bytes>".to_string(),
             SchemeVal::Int(n) => n.to_string(),
             SchemeVal::Float(f) => f.to_string(),
             SchemeVal::Bool(true) => "#t".to_string(),
@@ -138,6 +140,7 @@ impl SchemeVal {
     pub fn repr(&self) -> String {
         match self {
             SchemeVal::Str(s) => format!("{s:?}"),
+            SchemeVal::Bytes(_) => "#<bytes>".to_string(),
             other => other.display(),
         }
     }
@@ -152,7 +155,7 @@ impl SchemeVal {
                 .map(SchemeVal::to_splice_lossy)
                 .collect::<Vec<_>>()
                 .join(" "),
-            SchemeVal::Map(_) => self.display(),
+            SchemeVal::Bytes(_) | SchemeVal::Map(_) => self.display(),
             other => other.display(),
         }
     }
@@ -163,6 +166,7 @@ impl SchemeVal {
     /// represented as a plain string in a command context.
     pub fn to_splice(&self) -> Result<String, String> {
         match self {
+            SchemeVal::Bytes(_) => Err("cannot splice bytes into a command string".to_string()),
             SchemeVal::Lambda { .. } => {
                 Err("cannot splice a lambda into a command string".to_string())
             }
@@ -351,5 +355,12 @@ mod tests {
             SchemeVal::Str("val".into()).to_splice(),
             Ok("val".to_string())
         );
+    }
+
+    #[test]
+    fn bytes_cannot_be_spliced_into_commands() {
+        assert!(SchemeVal::Bytes(vec![0x89, b'P', b'N', b'G'])
+            .to_splice()
+            .is_err());
     }
 }
