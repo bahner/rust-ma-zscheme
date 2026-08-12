@@ -1852,6 +1852,9 @@ fn scheme_equal(a: &SchemeVal, b: &SchemeVal) -> bool {
         (SchemeVal::Bytes(x), SchemeVal::Bytes(y)) => x == y,
         (SchemeVal::Bool(x), SchemeVal::Bool(y)) => x == y,
         (SchemeVal::Nil, SchemeVal::Nil) => true,
+        // Self-evaluating `()` yields Nil while `(list)`/`'()` yield an empty
+        // List; both denote the same empty list and must compare equal.
+        (SchemeVal::Nil, SchemeVal::List(y)) | (SchemeVal::List(y), SchemeVal::Nil) => y.is_empty(),
         (SchemeVal::List(x), SchemeVal::List(y)) => {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| scheme_equal(a, b))
         }

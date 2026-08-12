@@ -4,6 +4,11 @@
 
 This workspace owns the reusable zscheme evaluator and host contracts. Platform I/O belongs behind `ma_zscheme::SchemeCtx`; evaluator code must not depend on Zion, the native CLI, Kubo, or browser APIs.
 
+## Agent rules
+
+- Write DRY, KISS code: avoid duplicated logic and prefer the simplest
+  implementation that meets the requirement.
+
 ## Content access contract
 
 Content references are literal data unless an explicit primitive consumes them:
