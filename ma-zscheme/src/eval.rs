@@ -2366,6 +2366,11 @@ mod tests {
         assert!(matches!(run("()"), SchemeVal::Nil));
     }
 
+    #[test]
+    fn empty_list_and_quote_nil_compare_equal() {
+        assert!(matches!(run("(equal? '() ())"), SchemeVal::Bool(true)));
+    }
+
     // ── Arithmetic ────────────────────────────────────────────────────────
 
     #[test]

@@ -37,10 +37,17 @@ fn scheme_equal(a: &SchemeVal, b: &SchemeVal) -> bool {
         (SchemeVal::Int(x), SchemeVal::Float(y)) => (*x as f64) == *y,
         (SchemeVal::Float(x), SchemeVal::Int(y)) => *x == (*y as f64),
         (SchemeVal::Str(x), SchemeVal::Str(y)) => x == y,
+        (SchemeVal::Bytes(x), SchemeVal::Bytes(y)) => x == y,
         (SchemeVal::Bool(x), SchemeVal::Bool(y)) => x == y,
         (SchemeVal::Nil, SchemeVal::Nil) => true,
+        (SchemeVal::Nil, SchemeVal::List(y)) | (SchemeVal::List(y), SchemeVal::Nil) => y.is_empty(),
         (SchemeVal::List(x), SchemeVal::List(y)) => {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| scheme_equal(a, b))
+        }
+        (SchemeVal::Map(x), SchemeVal::Map(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(key, value)| y.get(key).is_some_and(|other| scheme_equal(value, other)))
         }
         _ => false,
     }
