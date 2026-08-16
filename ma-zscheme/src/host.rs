@@ -46,6 +46,15 @@ pub trait SchemeCtx {
         sender: oneshot::Sender<Result<SchemeVal, String>>,
     );
 
+    /// Fill `len` bytes from the host's cryptographically secure random source.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the host cannot provide secure random bytes.
+    fn random_bytes(&self, _len: usize) -> Result<Vec<u8>, String> {
+        Err("secure random bytes are not supported by this host".to_string())
+    }
+
     // ── Asynchronous methods ──────────────────────────────────────────────
 
     /// Fetch the UTF-8 text content of a `/ipfs/<cid>`, `/ipns/<key>`,

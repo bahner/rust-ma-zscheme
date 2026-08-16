@@ -89,6 +89,11 @@ Type predicates: `string?` `number?` `boolean?` `procedure?`
 
 I/O and control: `display` `write` `error` `assert`
 
+Secure tokens: `(random-token)` asks the host for 16 cryptographically secure
+random bytes and returns 32 lowercase hexadecimal characters. Hosts without a
+secure entropy source return an error rather than falling back to predictable
+randomness.
+
 Script loading: `(include path)` — evaluate all forms in `path.content`
 
 Command splicing: `(shell-quote value)` returns `value` quoted as one

@@ -724,6 +724,7 @@ fn is_builtin(name: &str) -> bool {
             | "list?"
             | "rpc-send"
             | "msg-send"
+            | "random-token"
             | "ok?"
             | "err?"
             | "ok-val"
@@ -1721,6 +1722,22 @@ fn apply_builtin(
                     Err(e) => Ok(err_tuple(e)),
                 }
             }
+            "random-token" => {
+                arity("random-token", &args, 0)?;
+                let bytes = ctx.random_bytes(16).map_err(SchemeErr::MaError)?;
+                if bytes.len() != 16 {
+                    return Err(SchemeErr::MaError(format!(
+                        "random-token: host returned {} bytes, expected 16",
+                        bytes.len()
+                    )));
+                }
+                let mut token = String::with_capacity(32);
+                for byte in bytes {
+                    use std::fmt::Write;
+                    write!(&mut token, "{byte:02x}").expect("writing to String cannot fail");
+                }
+                Ok(SchemeVal::Str(token))
+            }
             // ── Reply tuple helpers ────────────────────────────────────────
             "ok?" => {
                 arity("ok?", &args, 1)?;
@@ -2101,6 +2118,7 @@ mod tests {
         fetch_paths: RefCell<Vec<String>>,
         fetch_source: RefCell<Option<String>>,
         resolved_ipns_paths: RefCell<Vec<String>>,
+        random_bytes: RefCell<Option<Result<Vec<u8>, String>>>,
     }
 
     impl SchemeCtx for TestCtx {
@@ -2117,6 +2135,12 @@ mod tests {
             _id: String,
             _tx: oneshot::Sender<Result<SchemeVal, String>>,
         ) {
+        }
+        fn random_bytes(&self, _len: usize) -> Result<Vec<u8>, String> {
+            self.random_bytes
+                .borrow_mut()
+                .take()
+                .unwrap_or_else(|| Err("no random bytes in tests".to_string()))
         }
         fn fetch_path<'a>(&'a self, path: &'a str) -> LocalBoxFuture<'a, Result<String, String>> {
             self.fetch_paths.borrow_mut().push(path.to_string());
@@ -2867,6 +2891,32 @@ mod tests {
             SchemeVal::Bool(true)
         ));
         assert!(matches!(run(r#"(err-msg '(:error "bad"))"#), SchemeVal::Str(s) if s == "bad"));
+    }
+
+    #[test]
+    fn random_token_encodes_sixteen_host_bytes_as_lowercase_hex() {
+        let test_ctx = Rc::new(TestCtx::default());
+        test_ctx
+            .random_bytes
+            .replace(Some(Ok((0_u8..16).collect())));
+
+        assert!(matches!(
+            run_with_ctx("(random-token)", test_ctx),
+            Ok(SchemeVal::Str(token)) if token == "000102030405060708090a0b0c0d0e0f"
+        ));
+    }
+
+    #[test]
+    fn random_token_propagates_host_failure() {
+        let test_ctx = Rc::new(TestCtx::default());
+        test_ctx
+            .random_bytes
+            .replace(Some(Err("entropy unavailable".to_string())));
+
+        assert!(matches!(
+            run_with_ctx("(random-token)", test_ctx),
+            Err(SchemeErr::MaError(error)) if error == "entropy unavailable"
+        ));
     }
 
     // ── guard form ────────────────────────────────────────────────────────

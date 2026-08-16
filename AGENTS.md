@@ -27,6 +27,9 @@ Inside Scheme parentheses, source uses hash-dot syntax exclusively for local pat
 ## Host boundaries
 
 - Keep `SchemeCtx::fetch_path`, `fetch_bytes`, and `resolve_ipns` platform-neutral.
+- `SchemeCtx::random_bytes` is the entropy boundary for `(random-token)`.
+  Hosts must use a cryptographically secure source and must fail rather than
+  substitute deterministic or presentation-grade randomness.
 - Hosts must preserve `SchemeVal::Bytes` as CBOR byte strings and string-keyed `SchemeVal::Map` values as CBOR maps.
 - IPNS name resolution belongs in `ma_core::IpfsGatewayResolver`; hosts call it instead of implementing gateway selection or response parsing themselves.
 
