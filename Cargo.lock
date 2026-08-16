@@ -227,21 +227,21 @@ dependencies = [
 
 [[package]]
 name = "ma-zscheme"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "futures",
 ]
 
 [[package]]
 name = "ma-zscheme-ipfs"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "ma-zscheme 0.5.0",
 ]
 
 [[package]]
 name = "ma-zscheme-yaml"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "directories",
