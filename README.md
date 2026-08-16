@@ -89,10 +89,10 @@ Type predicates: `string?` `number?` `boolean?` `procedure?`
 
 I/O and control: `display` `write` `error` `assert`
 
-Secure tokens: `(random-token)` asks the host for 16 cryptographically secure
-random bytes and returns 32 lowercase hexadecimal characters. Hosts without a
-secure entropy source return an error rather than falling back to predictable
-randomness.
+Randomness: `(random)` returns a cryptographically secure number in the range
+$0 \leq x < 1$; `(random n)` returns an unbiased integer in the range
+$0 \leq x < n$. Hosts without a secure entropy source return an error rather
+than falling back to predictable randomness.
 
 Script loading: `(include path)` — evaluate all forms in `path.content`
 

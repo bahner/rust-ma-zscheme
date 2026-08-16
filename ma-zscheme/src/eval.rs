@@ -724,7 +724,7 @@ fn is_builtin(name: &str) -> bool {
             | "list?"
             | "rpc-send"
             | "msg-send"
-            | "random-token"
+            | "random"
             | "ok?"
             | "err?"
             | "ok-val"
@@ -1722,22 +1722,7 @@ fn apply_builtin(
                     Err(e) => Ok(err_tuple(e)),
                 }
             }
-            "random-token" => {
-                arity("random-token", &args, 0)?;
-                let bytes = ctx.random_bytes(16).map_err(SchemeErr::MaError)?;
-                if bytes.len() != 16 {
-                    return Err(SchemeErr::MaError(format!(
-                        "random-token: host returned {} bytes, expected 16",
-                        bytes.len()
-                    )));
-                }
-                let mut token = String::with_capacity(32);
-                for byte in bytes {
-                    use std::fmt::Write;
-                    write!(&mut token, "{byte:02x}").expect("writing to String cannot fail");
-                }
-                Ok(SchemeVal::Str(token))
-            }
+            "random" => random(&args, &ctx),
             // ── Reply tuple helpers ────────────────────────────────────────
             "ok?" => {
                 arity("ok?", &args, 1)?;
@@ -1810,6 +1795,58 @@ fn apply_builtin(
 }
 
 // ── Helper utilities ───────────────────────────────────────────────────────
+
+fn random(args: &[SchemeVal], ctx: &Ctx) -> Result<SchemeVal, SchemeErr> {
+    if args.len() > 1 {
+        return Err(SchemeErr::Runtime(format!(
+            "random: expected 0 or 1 arguments, got {}",
+            args.len()
+        )));
+    }
+
+    let random_u64 = || {
+        let bytes = ctx.random_bytes(8).map_err(SchemeErr::MaError)?;
+        let bytes: [u8; 8] = bytes.try_into().map_err(|bytes: Vec<u8>| {
+            SchemeErr::MaError(format!(
+                "random: host returned {} bytes, expected 8",
+                bytes.len()
+            ))
+        })?;
+        Ok(u64::from_be_bytes(bytes))
+    };
+
+    let Some(bound) = args.first() else {
+        const EXPONENT_ONE: u64 = 0x3ff0_0000_0000_0000;
+        let mantissa = random_u64()? >> 12;
+        return Ok(SchemeVal::Float(
+            f64::from_bits(EXPONENT_ONE | mantissa) - 1.0,
+        ));
+    };
+
+    let SchemeVal::Int(bound) = bound else {
+        return Err(SchemeErr::Runtime(
+            "random: upper bound must be an integer".to_string(),
+        ));
+    };
+    let bound = u64::try_from(*bound).map_err(|_| {
+        SchemeErr::Runtime("random: upper bound must be greater than zero".to_string())
+    })?;
+    if bound == 0 {
+        return Err(SchemeErr::Runtime(
+            "random: upper bound must be greater than zero".to_string(),
+        ));
+    }
+
+    let zone = u64::MAX - (u64::MAX % bound);
+    loop {
+        let value = random_u64()?;
+        if value < zone {
+            let value = i64::try_from(value % bound)
+                .map_err(|_| SchemeErr::Runtime("random: result overflow".to_string()))?;
+            return Ok(SchemeVal::Int(value));
+        }
+    }
+}
 
 fn arity(name: &str, args: &[SchemeVal], n: usize) -> Result<(), SchemeErr> {
     if args.len() == n {
@@ -2894,28 +2931,60 @@ mod tests {
     }
 
     #[test]
-    fn random_token_encodes_sixteen_host_bytes_as_lowercase_hex() {
+    fn random_without_bound_returns_unit_float_from_host_entropy() {
         let test_ctx = Rc::new(TestCtx::default());
         test_ctx
             .random_bytes
-            .replace(Some(Ok((0_u8..16).collect())));
+            .replace(Some(Ok(u64::MAX.to_be_bytes().to_vec())));
 
         assert!(matches!(
-            run_with_ctx("(random-token)", test_ctx),
-            Ok(SchemeVal::Str(token)) if token == "000102030405060708090a0b0c0d0e0f"
+            run_with_ctx("(random)", test_ctx),
+            Ok(SchemeVal::Float(value)) if (0.999_999_999_999_999_8..1.0).contains(&value)
         ));
     }
 
     #[test]
-    fn random_token_propagates_host_failure() {
+    fn random_with_bound_returns_unbiased_integer() {
+        let test_ctx = Rc::new(TestCtx::default());
+        test_ctx
+            .random_bytes
+            .replace(Some(Ok(42_u64.to_be_bytes().to_vec())));
+
+        assert!(matches!(
+            run_with_ctx("(random 10)", test_ctx),
+            Ok(SchemeVal::Int(2))
+        ));
+    }
+
+    #[test]
+    fn random_propagates_host_failure() {
         let test_ctx = Rc::new(TestCtx::default());
         test_ctx
             .random_bytes
             .replace(Some(Err("entropy unavailable".to_string())));
 
         assert!(matches!(
-            run_with_ctx("(random-token)", test_ctx),
+            run_with_ctx("(random)", test_ctx),
             Err(SchemeErr::MaError(error)) if error == "entropy unavailable"
+        ));
+    }
+
+    #[test]
+    fn random_rejects_invalid_arguments_before_requesting_entropy() {
+        assert!(run_res("(random 0)").is_err());
+        assert!(run_res("(random -1)").is_err());
+        assert!(run_res("(random 1.5)").is_err());
+        assert!(run_res("(random 1 2)").is_err());
+    }
+
+    #[test]
+    fn random_rejects_wrong_host_byte_count() {
+        let test_ctx = Rc::new(TestCtx::default());
+        test_ctx.random_bytes.replace(Some(Ok(vec![0; 7])));
+
+        assert!(matches!(
+            run_with_ctx("(random)", test_ctx),
+            Err(SchemeErr::MaError(error)) if error == "random: host returned 7 bytes, expected 8"
         ));
     }
 
