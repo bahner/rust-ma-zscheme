@@ -4,10 +4,39 @@
 
 This workspace owns the reusable zscheme evaluator and host contracts. Platform I/O belongs behind `ma_zscheme::SchemeCtx`; evaluator code must not depend on Zion, the native CLI, Kubo, or browser APIs.
 
+## Workspace layout
+
+This is a **virtual workspace**: the root `Cargo.toml` is `[workspace]`-only
+and has no `[package]`. Every published crate lives in a member directory:
+
+| Crate | Directory | crates.io package |
+|---|---|---|
+| Scheme evaluator and host contracts | `ma-zscheme/` | `ma-zscheme` |
+| YAML mapping extensions | `ma-zscheme-yaml/` | `ma-zscheme-yaml` |
+| IPFS/IPLD helpers | `ma-zscheme-ipfs/` | `ma-zscheme-ipfs` |
+
+The workspace root holds only the workspace manifest, `Cargo.lock`, and
+top-level docs/scripts. It must never contain crate source: a root-level
+`src/` or `[package]` is orphaned code that is never compiled, tested, or
+published, but looks real to an agent. The evaluator and its Scheme builtins
+(e.g. `ok?`, `ok-reply?`, `err?`, `ok-val`, `err-msg`) live in
+`ma-zscheme/src/` — today the flat `ma-zscheme/src/eval.rs`. Before editing
+any `.rs` file, confirm it sits under a member directory; a change anywhere
+else silently misses the published crate.
+
+> 2026-08-30: the `ok-reply?` builtin and the `eval/` module split were
+> committed to a stray root `src/`, so published `ma-zscheme` 0.6.0 shipped
+> without `ok-reply?` and consumers failed with `undefined: ok-reply?`. The
+> stray directory was deleted (`368c2cf`) and the fix re-applied to
+> `ma-zscheme/src/eval.rs` (`e3c30c9`, v0.6.1). Never recreate a root `src/`.
+
 ## Agent rules
 
 - Write DRY, KISS code: avoid duplicated logic and prefer the simplest
   implementation that meets the requirement.
+- Crate source lives only in member directories — see "Workspace layout".
+  Never create or edit a root-level `src/`; it is orphaned code that is
+  never compiled, tested, or published.
 
 ## Content access contract
 
