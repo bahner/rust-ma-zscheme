@@ -241,7 +241,7 @@ dependencies = [
 
 [[package]]
 name = "ma-zscheme-yaml"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "directories",
