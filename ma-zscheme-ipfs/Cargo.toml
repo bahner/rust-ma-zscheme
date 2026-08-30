@@ -9,4 +9,4 @@ repository = "https://github.com/bahner/rust-ma-zscheme"
 keywords = ["scheme", "ipfs", "config", "actor"]
 
 [dependencies]
-ma-zscheme = "0.5"
+ma-zscheme = "0.6"
