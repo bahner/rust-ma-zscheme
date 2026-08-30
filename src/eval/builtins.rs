@@ -10,7 +10,7 @@ use crate::host::Ctx;
 use crate::value::{Env, SchemeVal};
 
 use super::helpers::{
-    arity, arity_min, compare_chain, err_tuple, int_arg, is_err_tuple, is_ok_tuple, list_arg,
+    arity, arity_min, compare_chain, err_tuple, int_arg, is_err_ack, is_ok_ack, is_ok_reply, list_arg,
     num_lt, num_pred, ok_tuple, one_float, str_arg, timeout_tuple,
 };
 use super::{apply, eval_source_in_env, is_link_value, SchemeErr};
@@ -43,7 +43,7 @@ pub(super) fn is_builtin(name: &str) -> bool {
         // ma actor primitives
         | "rpc-send" | "msg-send"
         // reply tuple helpers
-        | "ok?" | "err?" | "ok-val" | "err-msg"
+        | "ok?" | "ok-reply?" | "err?" | "ok-val" | "err-msg"
         // misc
         | "use" | "include"
     )
@@ -85,7 +85,7 @@ pub(super) fn apply_builtin(
 
             "display" | "write" | "newline" | "error" | "assert" => builtin_io(&name, args, &ctx),
 
-            "rpc-send" | "msg-send" | "ok?" | "err?" | "ok-val" | "err-msg" | "use"
+            "rpc-send" | "msg-send" | "ok?" | "ok-reply?" | "err?" | "ok-val" | "err-msg" | "use"
             | "include" => builtin_ma(&name, args, ctx).await,
 
             other => Err(SchemeErr::Undefined(other.to_string())),
@@ -682,11 +682,15 @@ async fn builtin_ma(
         }
         "ok?" => {
             arity("ok?", &args, 1)?;
-            Ok(SchemeVal::Bool(is_ok_tuple(&args[0])))
+            Ok(SchemeVal::Bool(is_ok_ack(&args[0])))
+        }
+        "ok-reply?" => {
+            arity("ok-reply?", &args, 1)?;
+            Ok(SchemeVal::Bool(is_ok_reply(&args[0])))
         }
         "err?" => {
             arity("err?", &args, 1)?;
-            Ok(SchemeVal::Bool(is_err_tuple(&args[0])))
+            Ok(SchemeVal::Bool(is_err_ack(&args[0])))
         }
         "ok-val" => {
             arity("ok-val", &args, 1)?;

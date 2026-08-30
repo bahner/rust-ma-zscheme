@@ -186,14 +186,19 @@ fn timeout_tuple() -> SchemeVal {
     SchemeVal::List(vec![SchemeVal::Str(":timeout".to_string())])
 }
 
-fn is_ok_tuple(v: &SchemeVal) -> bool {
+fn is_ok_ack(v: &SchemeVal) -> bool {
+    // The bare ":ok" ack — success with no payload.
+    matches!(v, SchemeVal::Str(s) if s == ":ok")
+}
+
+fn is_ok_reply(v: &SchemeVal) -> bool {
+    // The (:ok payload) tuple — success carrying a payload.
     matches!(v, SchemeVal::List(items)
         if matches!(items.first(), Some(SchemeVal::Str(s)) if s == ":ok"))
 }
 
-fn is_err_tuple(v: &SchemeVal) -> bool {
-    matches!(v, SchemeVal::List(items)
-        if matches!(items.first(), Some(SchemeVal::Str(s)) if s == ":error"))
+fn is_err_ack(v: &SchemeVal) -> bool {
+    matches!(v, SchemeVal::Str(s) if s == ":error")
 }
 
 fn str_arg(v: &SchemeVal, name: &str) -> Result<String, SchemeErr> {

@@ -150,7 +150,7 @@ failure raises a `SchemeErr`. Use `rpc-send` for explicit tuple handling.
 (@sky#room:look)                      ; → "You are in a quiet room."
 (@(#.my.ctx.room):owner?)             ; → calls :owner? on the saved room
 (rpc-send "@sky#room" ":look")       ; → (:ok "You are in a quiet room.")
-(ok? (rpc-send "@sky#ping" ":ping"))      ; → #t
+(ok-reply? (rpc-send "@sky#ping" ":ping"))      ; → #t
 ```
 
 ### CID loading
@@ -203,8 +203,9 @@ Inside a `(…)` expression, `|` threads a value through a chain of functions
 
 | Function | Description |
 |----------|-------------|
-| `(ok? reply)` | True if first element is `":ok"` |
-| `(err? reply)` | True if first element is `":error"` |
+| `(ok? reply)` | True only for the bare `":ok"` ack |
+| `(ok-reply? reply)` | True for an `(:ok value)` tuple |
+| `(err? reply)` | True only for the bare `":error"` |
 | `(ok-val reply)` | Second element of `(:ok value)` |
 | `(err-msg reply)` | Second element of `(:error reason)` |
 

@@ -642,7 +642,7 @@ fn eval_atom(s: &str, env: &Env) -> Result<SchemeVal, SchemeErr> {
 
 
 // ── Submodule re-exports ───────────────────────────────────────────────────
-pub use helpers::{err_tuple, is_err_tuple, is_ok_tuple, ok_tuple, timeout_tuple};
+pub use helpers::{err_tuple, is_err_ack, is_ok_ack, is_ok_reply, ok_tuple, timeout_tuple};
 
 #[cfg(test)]
 mod tests {
@@ -737,6 +737,36 @@ mod tests {
         assert!(!is_link_value(
             "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
         ));
+    }
+
+    // ── Reply predicates ──────────────────────────────────────────────────
+
+    #[test]
+    fn ok_predicate_is_true_only_for_the_bare_ack() {
+        // ok? is the bare :ok ack; the (:ok payload) tuple is ok-reply?'s job.
+        assert!(matches!(run(r#"(ok? ":ok")"#), SchemeVal::Bool(true)));
+        assert!(matches!(run(r#"(ok? (list ":ok" "prop updated"))"#), SchemeVal::Bool(false)));
+        assert!(matches!(run(r#"(ok? "prop updated")"#), SchemeVal::Bool(false)));
+        assert!(matches!(run(r#"(ok? (list ":error" "nope"))"#), SchemeVal::Bool(false)));
+        assert!(matches!(run(r#"(ok? ())"#), SchemeVal::Bool(false)));
+    }
+
+    #[test]
+    fn ok_reply_predicate_is_true_only_for_the_ok_tuple() {
+        assert!(matches!(
+            run(r#"(ok-reply? (list ":ok" "prop updated"))"#),
+            SchemeVal::Bool(true)
+        ));
+        assert!(matches!(run(r#"(ok-reply? ":ok")"#), SchemeVal::Bool(false)));
+        assert!(matches!(run(r#"(ok-reply? "prop updated")"#), SchemeVal::Bool(false)));
+        assert!(matches!(run(r#"(ok-reply? (list ":error" "nope"))"#), SchemeVal::Bool(false)));
+    }
+
+    #[test]
+    fn err_predicate_is_true_only_for_the_bare_error() {
+        assert!(matches!(run(r#"(err? ":error")"#), SchemeVal::Bool(true)));
+        assert!(matches!(run(r#"(err? (list ":error" "nope"))"#), SchemeVal::Bool(false)));
+        assert!(matches!(run(r#"(err? ":ok")"#), SchemeVal::Bool(false)));
     }
 
     // ── Atoms & literals ──────────────────────────────────────────────────
