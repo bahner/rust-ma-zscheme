@@ -727,6 +727,7 @@ fn is_builtin(name: &str) -> bool {
             | "random"
             | "ok?"
             | "err?"
+            | "ok-reply?"
             | "ok-val"
             | "err-msg"
             | "use"
@@ -1726,11 +1727,15 @@ fn apply_builtin(
             // ── Reply tuple helpers ────────────────────────────────────────
             "ok?" => {
                 arity("ok?", &args, 1)?;
-                Ok(SchemeVal::Bool(is_ok_tuple(&args[0])))
+                Ok(SchemeVal::Bool(is_ok_ack(&args[0])))
+            }
+            "ok-reply?" => {
+                arity("ok-reply?", &args, 1)?;
+                Ok(SchemeVal::Bool(is_ok_reply(&args[0])))
             }
             "err?" => {
                 arity("err?", &args, 1)?;
-                Ok(SchemeVal::Bool(is_err_tuple(&args[0])))
+                Ok(SchemeVal::Bool(is_err_ack(&args[0])))
             }
             "ok-val" => {
                 arity("ok-val", &args, 1)?;
@@ -2081,14 +2086,19 @@ fn timeout_tuple() -> SchemeVal {
     SchemeVal::List(vec![SchemeVal::Str(":timeout".to_string())])
 }
 
-fn is_ok_tuple(v: &SchemeVal) -> bool {
+fn is_ok_ack(v: &SchemeVal) -> bool {
+    // The bare ":ok" ack — success with no payload.
+    matches!(v, SchemeVal::Str(s) if s == ":ok")
+}
+
+fn is_ok_reply(v: &SchemeVal) -> bool {
+    // The (:ok payload) tuple — success carrying a payload.
     matches!(v, SchemeVal::List(items)
         if matches!(items.first(), Some(SchemeVal::Str(s)) if s == ":ok"))
 }
 
-fn is_err_tuple(v: &SchemeVal) -> bool {
-    matches!(v, SchemeVal::List(items)
-        if matches!(items.first(), Some(SchemeVal::Str(s)) if s == ":error"))
+fn is_err_ack(v: &SchemeVal) -> bool {
+    matches!(v, SchemeVal::Str(s) if s == ":error")
 }
 
 fn str_arg(v: &SchemeVal, name: &str) -> Result<String, SchemeErr> {
@@ -2918,15 +2928,39 @@ mod tests {
 
     #[test]
     fn ok_and_error_tuple_helpers() {
+        // ok? is the bare :ok ack only.
+        assert!(matches!(run(r#"(ok? ":ok")"#), SchemeVal::Bool(true)));
         assert!(matches!(
             run(r#"(ok? '(:ok "done"))"#),
+            SchemeVal::Bool(false)
+        ));
+        assert!(matches!(
+            run(r#"(ok? "prop updated")"#),
+            SchemeVal::Bool(false)
+        ));
+
+        // ok-reply? is the (:ok payload) tuple only.
+        assert!(matches!(
+            run(r#"(ok-reply? '(:ok "done"))"#),
             SchemeVal::Bool(true)
         ));
-        assert!(matches!(run(r#"(ok-val '(:ok "done"))"#), SchemeVal::Str(s) if s == "done"));
+        assert!(matches!(
+            run(r#"(ok-reply? ":ok")"#),
+            SchemeVal::Bool(false)
+        ));
+        assert!(matches!(
+            run(r#"(ok-reply? '(:error "nope"))"#),
+            SchemeVal::Bool(false)
+        ));
+
+        // err? is the bare :error ack only.
+        assert!(matches!(run(r#"(err? ":error")"#), SchemeVal::Bool(true)));
         assert!(matches!(
             run(r#"(err? '(:error "bad"))"#),
-            SchemeVal::Bool(true)
+            SchemeVal::Bool(false)
         ));
+
+        assert!(matches!(run(r#"(ok-val '(:ok "done"))"#), SchemeVal::Str(s) if s == "done"));
         assert!(matches!(run(r#"(err-msg '(:error "bad"))"#), SchemeVal::Str(s) if s == "bad"));
     }
 
