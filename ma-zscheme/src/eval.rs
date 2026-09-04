@@ -722,7 +722,7 @@ fn is_builtin(name: &str) -> bool {
             | "error"
             | "assert"
             | "list?"
-            | "rpc-send"
+            | "actor-send"
             | "msg-send"
             | "random"
             | "ok?"
@@ -1690,12 +1690,12 @@ fn apply_builtin(
                 )))
             }
             // ── ma send primitives ────────────────────────────────────────
-            "rpc-send" => {
-                arity_min("rpc-send", &args, 2)?;
-                let raw = str_arg(&args[0], "rpc-send")?;
-                let verb = str_arg(&args[1], "rpc-send")?;
+            "actor-send" => {
+                arity_min("actor-send", &args, 2)?;
+                let raw = str_arg(&args[0], "actor-send")?;
+                let verb = str_arg(&args[1], "actor-send")?;
                 let target = ctx.resolve_target(&raw).map_err(SchemeErr::MaError)?;
-                let send_result = ctx.send_rpc(&target, &verb, &args[2..]).await;
+                let send_result = ctx.send_actor(&target, &verb, &args[2..]).await;
                 match send_result {
                     Err(e) => Ok(err_tuple(e)),
                     Ok(msg_id) => {
@@ -2220,7 +2220,7 @@ mod tests {
                 .push((actor.to_string(), args.to_vec()));
             Box::pin(async { Ok(SchemeVal::Str("actor reply".to_string())) })
         }
-        fn send_rpc<'a>(
+        fn send_actor<'a>(
             &'a self,
             _target: &'a str,
             _verb: &'a str,

@@ -38,7 +38,7 @@ pub trait SchemeCtx {
     /// Returns `Err` if the alias is unknown or the input is not a valid DID.
     fn resolve_target(&self, raw: &str) -> Result<String, String>;
 
-    /// Register a oneshot `sender` so the poll loop can deliver the RPC reply
+    /// Register a oneshot `sender` so the poll loop can deliver the reply
     /// for the message identified by `msg_id`.
     fn register_reply_sender(
         &self,
@@ -89,9 +89,9 @@ pub trait SchemeCtx {
         args: &'a [SchemeVal],
     ) -> LocalBoxFuture<'a, Result<SchemeVal, SchemeErr>>;
 
-    /// Send an RPC message to `target` and return the message id for reply
+    /// Send an actor message to `target` and return the message id for reply
     /// correlation via `register_reply_sender`.
-    fn send_rpc<'a>(
+    fn send_actor<'a>(
         &'a self,
         target: &'a str,
         verb: &'a str,

@@ -135,7 +135,7 @@ The evaluator recognises forms based on the head of a list expression.
 (#.my.config.k: "value")             ; sets a config key
 ```
 
-### Actor RPC (asynchronous)
+### Actor call (asynchronous)
 
 | Form | Meaning |
 |------|---------|
@@ -144,13 +144,13 @@ The evaluator recognises forms based on the head of a list expression.
 | `(@(<expression>):verb arg…)` | evaluate a DID/DID-URL expression, then send RPC |
 
 The `@` / `did:` syntax auto-unwraps replies: success returns the value,
-failure raises a `SchemeErr`. Use `rpc-send` for explicit tuple handling.
+failure raises a `SchemeErr`. Use `actor-send` for explicit tuple handling.
 
 ```scheme
 (@sky#room:look)                      ; → "You are in a quiet room."
 (@(#.my.ctx.room):owner?)             ; → calls :owner? on the saved room
-(rpc-send "@sky#room" ":look")       ; → (:ok "You are in a quiet room.")
-(ok-reply? (rpc-send "@sky#ping" ":ping"))      ; → #t
+(actor-send "@sky#room" ":look")       ; → (:ok "You are in a quiet room.")
+(ok-reply? (actor-send "@sky#ping" ":ping"))      ; → #t
 ```
 
 ### CID loading
@@ -194,7 +194,7 @@ Inside a `(…)` expression, `|` threads a value through a chain of functions
 
 | Function | Description |
 |----------|-------------|
-| `(rpc-send target verb arg…)` | RPC call; returns `(:ok v)` / `(:error r)` / `(:timeout)` |
+| `(actor-send target verb arg…)` | actor call; returns `(:ok v)` / `(:error r)` / `(:timeout)` |
 | `(msg-send target body)` | Plain-text inbox message; returns `(:ok msg-id)` |
 | `(chat-send target text)` | Ephemeral chat message |
 | `(emote-send target text)` | Emote message |
@@ -283,7 +283,7 @@ impl SchemeCtx for MyCtx {
         todo!()
     }
 
-    fn send_rpc<'a>(
+    fn send_actor<'a>(
         &'a self,
         target: &'a str,
         verb: &'a str,
